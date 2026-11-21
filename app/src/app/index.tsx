@@ -12,7 +12,7 @@ export default function Home() {
         </View>
         <View style={styles.actions}>
           {([
-            ['/host', 'Host Game'], ['/join', 'Join Game'], ['/tutorial', 'How to Play'],
+            ['/demo', 'Play demo round'], ['/host', 'Host Game'], ['/join', 'Join Game'], ['/tutorial', 'How to Play'],
           ] as const).map(([href, label], index) => (
             <Link key={href} href={href} asChild>
               <Pressable style={({ pressed }) => [styles.action, index === 0 && styles.primary, pressed && styles.pressed]}>

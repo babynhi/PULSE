@@ -7,7 +7,7 @@ Shared project instructions for coding agents. Keep these instructions in
 
 PULSE is a real-world multiplayer infection survival game with hidden roles,
 Bluetooth proximity, and a shrinking safe zone. The mobile app currently uses
-Expo, React Native, and TypeScript.
+Expo, React Native, and TypeScript. This is a hackathon project
 
 ## Read before working
 
