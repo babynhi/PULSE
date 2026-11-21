@@ -19,6 +19,8 @@ function setup(n = 4, opts: { doctor?: boolean; infected?: number } = {}) {
     for (let i = 0; i < n; i++) room.join(`p${i}`, `P${i}`, now);
     room.updateSettings('p0', {
         disperseSec: 0,
+        biteHoldMs: 2000, // tests were written for 2 s holds
+        healHoldMs: 2000,
         durationSec: 60,
         doctorEnabled: opts.doctor ?? true,
         infectedCount: opts.infected ?? 1,
