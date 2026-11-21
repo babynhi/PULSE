@@ -1,9 +1,16 @@
+import { router, Stack } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ImageBackground, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { RoomView } from '../../../shared/protocol';
 import { enterRoom } from './session';
 
+import { background, ink, menuFace, MenuDivider, MenuItem, scriptFace, surface, useMenuFonts } from '../ui/Menu';
+
 export function RoomEntryScreen({ mode }: { mode: 'host' | 'join' }) {
+  const fonts = useMenuFonts();
+  const [focused, setFocused] = useState<'name' | 'code' | null>(null);
+  const codeInput = useRef<React.ComponentRef<typeof TextInput>>(null);
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [room, setRoom] = useState<RoomView | null>(null);
@@ -41,10 +48,10 @@ export function RoomEntryScreen({ mode }: { mode: 'host' | 'join' }) {
   }
 
   const action = pending ? 'Connecting…' : rejoinCode ? 'Rejoin room' : mode === 'host' ? 'Create room' : 'Join room';
-  return (
-    <ScrollView style={styles.page} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      {room ? (
-        <>
+  if (room) {
+    return (
+      <ScrollView style={styles.page} contentContainerStyle={styles.content}>
+        <Stack.Screen options={{ headerShown: true }} />
           <Text accessibilityRole="header" style={styles.title}>Room {room.code}</Text>
           <Pressable accessibilityRole="button" style={styles.secondary} onPress={async () => {
             try { await Share.share({ message: 'Join my PULSE room: ' + room.code }); }
@@ -57,26 +64,58 @@ export function RoomEntryScreen({ mode }: { mode: 'host' | 'join' }) {
               <Text style={styles.muted}>{!player.connected ? 'Disconnected' : player.ready ? 'Ready' : 'Waiting'}</Text>
             </View>
           ))}
-        </>
-      ) : (
-        <>
-          <Text accessibilityRole="header" style={styles.title}>{mode === 'host' ? 'Host a game' : 'Join a game'}</Text>
-          <Text style={styles.label}>Player name</Text>
-          <TextInput accessibilityLabel="Player name" style={styles.input} value={name} onChangeText={setName} editable={!pending} autoCorrect={false} />
-          {(mode === 'join' || rejoinCode !== '') && <>
-            <Text style={styles.label}>Room code</Text>
-            <TextInput accessibilityLabel="Room code" style={styles.input} value={rejoinCode || code}
-              onChangeText={(value) => { setCode(value); setRejoinCode(''); }} editable={!pending && !rejoinCode}
-              autoCapitalize="characters" autoCorrect={false} />
-          </>}
-          <Pressable accessibilityRole="button" accessibilityState={{ disabled: pending, busy: pending }} disabled={pending}
-            style={styles.primary} onPress={submit}><Text style={styles.primaryText}>{action}</Text></Pressable>
-          {rejoinCode !== '' && !pending && <Pressable accessibilityRole="button" style={styles.secondary}
-            onPress={() => { setRejoinCode(''); setError(''); }}><Text style={styles.link}>Use a different room</Text></Pressable>}
-        </>
-      )}
-      {error !== '' && <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.error}>{error}</Text>}
-    </ScrollView>
+        {error !== '' && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
+      </ScrollView>
+    );
+  }
+
+  const showCode = mode === 'join' || Boolean(rejoinCode);
+  const labelStyle = [entry.label, fonts && menuFace];
+  return (
+    <ImageBackground source={background} style={entry.page}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <SafeAreaView style={entry.safe}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Back to main menu"
+          onPress={() => router.canGoBack() ? router.back() : router.replace('/')}
+          style={({ pressed }) => [entry.back, pressed && entry.pressed]}>
+          <Text style={[entry.backText, fonts && menuFace]}>{'\u2039  Back'}</Text>
+        </Pressable>
+        <ScrollView contentContainerStyle={entry.content} keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets>
+          <View style={entry.form}>
+            <Text accessibilityRole="header" style={[entry.title, fonts && scriptFace]}>
+              {mode === 'host' ? 'Host a Game' : 'Join a Game'}
+            </Text>
+            <MenuDivider />
+            <View style={entry.field}>
+              <Text style={labelStyle}>Player name</Text>
+              <TextInput accessibilityLabel="Player name" style={[entry.input, focused === 'name' && entry.focus]}
+                value={name} onChangeText={setName} editable={!pending} autoCorrect={false}
+                onFocus={() => setFocused('name')} onBlur={() => setFocused(null)}
+                returnKeyType={showCode && !rejoinCode ? 'next' : 'go'}
+                onSubmitEditing={() => showCode && !rejoinCode ? codeInput.current?.focus() : submit()} />
+            </View>
+            {showCode && <View style={entry.field}>
+              <Text style={labelStyle}>Room code</Text>
+              <TextInput ref={codeInput} accessibilityLabel="Room code"
+                style={[entry.input, entry.code, focused === 'code' && entry.focus]}
+                value={rejoinCode || code} onChangeText={setCode} editable={!pending && !rejoinCode}
+                onFocus={() => setFocused('code')} onBlur={() => setFocused(null)}
+                autoCapitalize="characters" autoCorrect={false} returnKeyType="go" onSubmitEditing={submit} />
+            </View>}
+            {error !== '' && <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.error}>{error}</Text>}
+            <View style={entry.actions}>
+              <MenuItem label={action} fonts={fonts} disabled={pending} onPress={submit} />
+              {rejoinCode !== '' && !pending && <Pressable accessibilityRole="button" style={styles.secondary}
+                onPress={() => { setRejoinCode(''); setError(''); }}>
+                <Text style={labelStyle}>Use a different room</Text>
+              </Pressable>}
+              <MenuDivider flipped />
+            </View>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </ImageBackground>
   );
 }
 
@@ -87,11 +126,26 @@ const styles = StyleSheet.create({
   heading: { color: '#F2F5ED', fontWeight: '600', fontSize: 22, marginTop: 16 },
   label: { color: '#F2F5ED', fontSize: 18 },
   muted: { color: '#A7B4AF', fontSize: 15 },
-  input: { borderWidth: 1, borderColor: '#70847D', borderRadius: 8, padding: 14, color: '#F2F5ED', fontSize: 18 },
-  primary: { minHeight: 48, justifyContent: 'center', alignItems: 'center', backgroundColor: '#BCFA74', borderRadius: 8, marginTop: 12 },
-  primaryText: { color: '#152013', fontSize: 17, fontWeight: '700' },
   secondary: { minHeight: 48, justifyContent: 'center' },
   link: { color: '#BCFA74', fontSize: 17 },
   row: { gap: 4, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#70847D' },
   error: { color: '#FFB8A8', fontSize: 16 },
+});
+
+const entry = StyleSheet.create({
+  page: { flex: 1, backgroundColor: surface },
+  safe: { flex: 1, backgroundColor: 'rgba(0,0,0,0.32)' },
+  back: { alignSelf: 'flex-start', minHeight: 48, justifyContent: 'center', paddingHorizontal: 24 },
+  backText: { color: ink, fontSize: 22 },
+  pressed: { opacity: 0.65 },
+  content: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 32 },
+  form: { width: '100%', maxWidth: 360, alignItems: 'center', gap: 14 },
+  title: { color: ink, fontSize: 58, textAlign: 'center', paddingHorizontal: 8, textShadowColor: surface, textShadowRadius: 10 },
+  field: { width: '100%', gap: 4 },
+  label: { color: ink, fontSize: 20 },
+  input: { minHeight: 48, paddingHorizontal: 12, backgroundColor: 'rgba(0,0,0,0.55)',
+    color: ink, borderColor: 'rgba(236,236,236,0.55)', borderBottomWidth: 1, fontSize: 19 },
+  focus: { borderColor: ink },
+  code: { letterSpacing: 3 },
+  actions: { alignItems: 'center', marginTop: 12 },
 });
