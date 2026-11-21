@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { router } from 'expo-router';
+import { useDemoSettings } from './settings';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 const companions = [
@@ -16,7 +18,7 @@ export default function Setup({ onStart }: { onStart: (name: string) => void }) 
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [ready, setReady] = useState(false);
-  const [dispersal, setDispersal] = useState(5);
+  const { settings, openRoom } = useDemoSettings();
   const [seconds, setSeconds] = useState(0);
   const [heard, setHeard] = useState(0);
 
@@ -40,6 +42,7 @@ export default function Setup({ onStart }: { onStart: (name: string) => void }) 
     if (!name.trim()) return setError('Enter your player name.');
     if (!host && code.trim().toUpperCase() !== roomCode) return setError('Use PULSE to join the demo room.');
     setReady(false);
+    openRoom(host);
     setError('');
     setStage('lobby');
   }
@@ -74,14 +77,12 @@ export default function Setup({ onStart }: { onStart: (name: string) => void }) 
             </View>
           ))}
         </View>
-        <Text style={s.label}>Dispersal countdown</Text>
-        {host ? <View style={s.row}>
-          {[3, 5, 10].map(t => <Action key={t} label={t + ' sec'} selected={dispersal === t} onPress={() => setDispersal(t)} />)}
-        </View> : <Text style={s.body}>{dispersal} seconds · Set by host</Text>}
+        <Text style={s.muted}>{settings.durationSec / 60} min round · {settings.disperseSec}s dispersal</Text>
+        <Action label={host ? 'Edit game settings' : 'View game settings'} onPress={() => router.push('/game-settings')} />
         <View style={s.item}><Text style={s.body}>I’m ready</Text><Switch accessibilityLabel="I’m ready" value={ready} onValueChange={setReady} /></View>
         <Action primary label={host ? 'Start calibration' : 'Continue to calibration'} disabled={!ready}
           onPress={() => { setHeard(0); setStage('calibrate'); }} />
-        <Action label="Leave room" onPress={() => { setStage('entry'); setDispersal(5); }} />
+        <Action label="Leave room" onPress={() => setStage('entry')} />
       </>}
       {stage === 'calibrate' && <>
         <Text accessibilityRole="header" style={s.title}>Calibration</Text>
@@ -92,7 +93,7 @@ export default function Setup({ onStart }: { onStart: (name: string) => void }) 
         ))}</View>
         <Text accessibilityLiveRegion="polite" style={s.muted}>{heard} of {companions.length} nearby players detected</Text>
         <Action primary label="Begin dispersal" disabled={heard !== companions.length}
-          onPress={() => { setSeconds(dispersal); setStage('disperse'); }} />
+          onPress={() => { setSeconds(settings.disperseSec); setStage('disperse'); }} />
       </>}
       {stage === 'disperse' && <>
         <Text accessibilityRole="header" style={s.title}>Disperse</Text>

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import type { Role, Team, Zone } from '../../../shared/protocol';
+import type { Role, Settings, Team, Zone as Distance } from '../../../shared/protocol';
+import { Zone } from './Outcomes';
+import { useDemoSettings } from './settings';
 
 export interface DemoResult {
   name: string;
@@ -15,38 +17,65 @@ export interface DemoResult {
 }
 
 const roles = {
-  innocent: { title: 'Innocent', color: '#8CCFFF', objective: 'Stay clear of infected players and survive until time runs out.' },
-  doctor: { title: 'Doctor', color: '#BCFA74', objective: 'Find and heal infected players. You have two charges. If you are bitten, the infected win.' },
-  infected: { title: 'Infected', color: '#FFA58F', objective: 'Find nearby survivors and hold Bite to infect them. Infect the doctor to end the round.' },
-} satisfies Record<Role, { title: string; color: string; objective: string }>;
+  innocent: { title: 'Innocent', color: '#8CCFFF', objective: 'Avoid infected players and survive until time runs out.' },
+  doctor: { title: 'Doctor', color: '#BCFA74', objective: 'Cure infected players. If you are bitten, the infected win.' },
+  infected: { title: 'Infected', color: '#FFA58F', objective: 'Bite nearby survivors to infect them.' },
+};
 
-const contacts = [
-  { id: 1, label: 'Signal A', initial: 'HOT' },
-  { id: 2, label: 'Signal B', initial: 'WARM' },
-] as const;
-const bands: Zone[] = ['COLD', 'WARM', 'HOT'];
+const bands: { value: Distance; label: string }[] = [
+  { value: 'HOT', label: 'Very close' }, { value: 'WARM', label: 'Nearby' }, { value: 'COLD', label: 'Farther away' },
+];
 
-type GameProps = { name: string; onZone: (snapshot: DemoResult) => void; onEnd: (result: DemoResult) => void };
+interface Player {
+  name: string;
+  role: Role;
+  distance: Distance;
+}
 
-export default function Game({ name, onZone, onEnd }: GameProps) {
-  const [role, setRole] = useState<Role>('innocent');
+function makePlayers(role: Role, settings: Settings): Player[] {
+  const numInfected = settings.infectedCount - Number(role === 'infected');
+  return ['Mara', 'Jules', 'Remy'].map((name, index) => ({
+    name, distance: bands[index].value,
+    role: index < numInfected ? 'infected' : settings.doctorEnabled && role !== 'doctor' && index === 2 ? 'doctor' : 'innocent',
+  }));
+}
+
+function clock(seconds: number) {
+  return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+}
+
+type GameProps = { name: string; onEnd: (result: DemoResult) => void };
+
+export default function Game({ name, onEnd }: GameProps) {
+  const { settings } = useDemoSettings();
+  const allowedRoles = (Object.keys(roles) as Role[]).filter(role => {
+    if (role === 'doctor') return settings.doctorEnabled;
+    if (role === 'innocent') return settings.infectedCount + Number(settings.doctorEnabled) < 4;
+    return true;
+  });
+  const [role, setRole] = useState<Role>(() => allowedRoles[0]);
   const [stage, setStage] = useState<'sealed' | 'revealed' | 'playing'>('sealed');
   const [options, setOptions] = useState(false);
-  const [selected, setSelected] = useState<number>(1);
-  const [distances, setDistances] = useState<Zone[]>(contacts.map(contact => contact.initial));
-  const [completed, setCompleted] = useState<number[]>([]);
+  const [selected, setSelected] = useState(0);
+  const [players, setPlayers] = useState(() => makePlayers(role, settings));
+  const [bites, setBites] = useState(0);
+  const [heals, setHeals] = useState(0);
+  const [immuneUntil, setImmuneUntil] = useState(0);
   const [feedback, setFeedback] = useState('');
   const [progress, setProgress] = useState(0);
   const holdTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const [start, setStart] = useState(Date.now);
   const [now, setNow] = useState(Date.now);
-  const roleInfo = roles[role];
-  const tint = roleInfo.color;
   const elapsed = Math.max(0, Math.floor((now - start) / 1000));
-  const remaining = Math.max(0, 15 * 60 - elapsed);
-  const band = distances[selected - 1];
+  const remaining = Math.max(0, settings.durationSec - elapsed);
+  const immunity = Math.max(0, Math.ceil((immuneUntil - now) / 1000));
+  const target = players[selected];
   const action = role === 'doctor' ? 'Heal' : 'Bite';
-  const canAct = role !== 'innocent' && band === 'HOT' && !completed.includes(selected);
+  const holdMs = role === 'doctor' ? settings.healHoldMs : settings.biteHoldMs;
+  const charges = Math.max(0, settings.healCharges - heals);
+  const canAct = target.distance === 'HOT' && (role === 'doctor' ? charges > 0 : role === 'infected' && target.role !== 'infected');
+  const pingAge = elapsed % settings.pingIntervalSec;
+  const pingActive = elapsed >= settings.pingIntervalSec && pingAge < settings.pingDurationSec;
 
   function cancelHold(announce = false) {
     if (!holdTimer.current) return;
@@ -57,7 +86,7 @@ export default function Game({ name, onZone, onEnd }: GameProps) {
   }
 
   useEffect(() => {
-    const clock = setInterval(() => setNow(Date.now()), 1000);
+    const timer = setInterval(() => setNow(Date.now()), 500);
     const sub = AppState.addEventListener('change', state => {
       if (state !== 'active') {
         cancelHold();
@@ -65,36 +94,32 @@ export default function Game({ name, onZone, onEnd }: GameProps) {
       }
     });
     return () => {
-      clearInterval(clock);
+      clearInterval(timer);
       if (holdTimer.current) clearInterval(holdTimer.current);
       sub.remove();
     };
   }, []);
 
-  function result(winner: Team, reason: string, affected = completed): DemoResult {
-    const standings: DemoResult['standings'] = role === 'infected'
-      ? [{ name: 'Mara', role: 'infected' }, { name: 'Jules', role: affected.includes(1) ? 'infected' : 'innocent' },
-        { name: 'Remy', role: affected.includes(2) ? 'infected' : 'doctor' }]
-      : [{ name: 'Mara', role: affected.includes(1) ? 'innocent' : 'infected' },
-        { name: 'Jules', role: role === 'doctor' && !affected.includes(2) ? 'infected' : 'innocent' },
-        { name: 'Remy', role: role === 'doctor' ? 'innocent' : 'doctor' }];
-    return { name, role, winner, reason, standings, bites: role === 'infected' ? affected.length : 0,
-      heals: role === 'doctor' ? affected.length : 0, elapsedSec: elapsed };
+  function finish(winner: Team, reason: string, roster = players, finalRole = role, biteCount = bites) {
+    onEnd({ name, role: finalRole, winner, reason, bites: biteCount, heals, elapsedSec: elapsed,
+      standings: roster.map(player => ({ name: player.name, role: player.role })) });
   }
 
   useEffect(() => {
-    if (stage === 'playing' && remaining === 0) onEnd(result('survivors', 'Time expired with survivors still active.'));
+    if (remaining === 0) finish('survivors', 'Time expired with survivors still active.');
   });
 
-  function chooseRole(next: Role) {
+  function restart(next: Role) {
     cancelHold();
-    setCompleted([]);
-    setDistances(contacts.map(contact => contact.initial));
-    setSelected(1);
+    setPlayers(makePlayers(next, settings));
+    setSelected(0);
     setRole(next);
     setStage('sealed');
     setOptions(false);
     setFeedback('');
+    setBites(0);
+    setHeals(0);
+    setImmuneUntil(0);
     setStart(now);
   }
 
@@ -104,79 +129,120 @@ export default function Game({ name, onZone, onEnd }: GameProps) {
     const started = Date.now();
     setProgress(0.01);
     holdTimer.current = setInterval(() => {
-      const fraction = Math.min(1, (Date.now() - started) / 2000);
+      const fraction = Math.min(1, (Date.now() - started) / holdMs);
       if (fraction < 1) return setProgress(fraction);
       cancelHold();
-      const total = completed.length + 1;
-      setCompleted(previous => [...previous, selected]);
+      if (role === 'doctor' && target.role !== 'infected') {
+        setFeedback('Healing had no effect. You kept your charge.');
+        return;
+      }
+      const nextRole: Role = role === 'doctor' ? 'innocent' : 'infected';
+      const next = players.map((player, index) => index === selected ? { ...player, role: nextRole } : player);
+      setPlayers(next);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      if (role === 'infected' && selected === 2) onEnd(result('infected', 'The doctor was infected.', [...completed, selected]));
-      else setFeedback(role === 'doctor' ? (total === 1 ? 'Player cured. One healing charge left.' : 'Player cured. No healing charges left.') : 'Player infected.');
+      if (role === 'doctor') {
+        setHeals(heals + 1);
+        setFeedback('Player cured.');
+      } else {
+        setBites(bites + 1);
+        if (target.role === 'doctor') finish('infected', 'The doctor was infected.', next, role, bites + 1);
+        else if (next.every(player => player.role === 'infected')) finish('infected', 'Every remaining player was infected.', next, role, bites + 1);
+        else setFeedback('Player infected.');
+      }
     }, 50);
   }
 
-  const rolePicker = <View style={s.tools}>
-    <Control label={options ? 'Hide demo settings' : 'Demo settings'} onPress={() => setOptions(!options)} />
-    {options && <View style={s.group}><Text style={s.muted}>Restart this demo as</Text><View style={s.wrap}>
-      {(Object.keys(roles) as Role[]).map(value => <Control key={value} label={roles[value].title} onPress={() => chooseRole(value)} />)}
-    </View></View>}
+  function receiveAction() {
+    cancelHold();
+    if (role === 'infected') {
+      setRole('innocent');
+      setImmuneUntil(now + settings.immunitySec * 1000);
+      setFeedback('You were cured.');
+    } else if (immunity) {
+      setFeedback('Your immunity blocked the bite.');
+    } else if (role === 'doctor') {
+      finish('infected', 'You were bitten while playing as the doctor.', players, 'infected');
+    } else {
+      setRole('infected');
+      if (players.every(player => player.role === 'infected')) finish('infected', 'Every remaining player was infected.', players, 'infected');
+      else setFeedback('You were infected.');
+    }
+  }
+
+  const demoControls = <View style={s.group}>
+    <Control label={options ? 'Hide demo controls' : 'Demo controls'} onPress={() => setOptions(!options)} />
+    {options && <View style={s.card}>
+      <Text style={s.label}>Restart as</Text>
+      <View style={s.wrap}>{allowedRoles.map(value => <Control key={value} label={roles[value].title} onPress={() => restart(value)} />)}</View>
+      {stage === 'playing' && <>
+        <Text style={s.label}>Move selected player</Text>
+        <View style={s.wrap}>{bands.map(({ value, label }) => <Control key={value} label={label} selected={target.distance === value}
+          onPress={() => {
+            cancelHold(true);
+            setPlayers(previous => previous.map((player, i) => i === selected ? { ...player, distance: value } : player));
+            void Haptics.selectionAsync().catch(() => {});
+          }} />)}</View>
+        <Control label={role === 'infected' ? 'Simulate being cured' : 'Simulate being bitten'} onPress={receiveAction} />
+        <Control label="Finish demo round" onPress={() => finish('survivors', 'The demo round ended with survivors still active.')} />
+      </>}
+    </View>}
   </View>;
 
   return <ScrollView style={s.page} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
     {stage !== 'playing' ? <>
-      <Text accessibilityRole="header" style={s.title}>{stage === 'sealed' ? 'Private assignment' : roleInfo.title}</Text>
-      <View style={[s.card, { borderLeftColor: stage === 'sealed' ? '#BCFA74' : tint, borderLeftWidth: 4 }]}>
-        <Text style={s.kicker}>{name}</Text>
-        <Text style={s.body}>{stage === 'sealed' ? 'Check that only you can see this screen, then reveal your role.' : roleInfo.objective}</Text>
+      <Text accessibilityRole="header" style={s.title}>{stage === 'sealed' ? 'Private assignment' : roles[role].title}</Text>
+      <View style={[s.card, { borderLeftColor: stage === 'sealed' ? '#BCFA74' : roles[role].color, borderLeftWidth: 4 }]}>
+        <Text style={s.label}>{name}</Text>
+        <Text style={s.body}>{stage === 'sealed' ? 'Check that only you can see this screen, then reveal your role.' : roles[role].objective}</Text>
+        {stage === 'revealed' && role === 'doctor' && <Text style={s.muted}>Healing charges · {settings.healCharges}</Text>}
       </View>
       <Control primary label={stage === 'sealed' ? 'Reveal my role' : 'Hide role and enter game'} onPress={() => {
         setOptions(false); setStage(stage === 'sealed' ? 'revealed' : 'playing');
       }} />
-      {rolePicker}
     </> : <>
-      <View style={s.header}><Text accessibilityRole="header" style={s.title}>Radar</Text>
-        <Text style={s.time}>{Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, '0')}</Text></View>
+      <View style={s.header}><Text accessibilityRole="header" style={s.title}>Round</Text>
+        <View><Text style={s.muted}>Time left</Text><Text style={s.time}>{clock(remaining)}</Text></View></View>
+      <Zone showDemoControls={options} onEliminated={() => {
+        const infectedWin = players.every(player => player.role === 'infected');
+        finish(infectedWin ? 'infected' : 'survivors', 'You were eliminated outside the boundary. ' +
+          (infectedWin ? 'Only infected players remained.' : 'A survivor remained when the demo round ended.'));
+      }} />
       <View style={s.card}>
-        <View accessible accessibilityLabel={'Selected signal is ' + band.toLowerCase()} style={s.scope}>
-          {[100, 72, 44].map((size, index) => <View key={size} style={[s.ring, { width: `${size}%`, height: `${size}%`, borderColor: band === bands[index] ? tint : '#3D5150' }]} />)}
-          <View style={[s.dot, { backgroundColor: tint }]} />
-        </View>
-        <Text style={[s.band, { color: tint }]}>{band}</Text>
-        <Text style={s.caption}>{band === 'HOT' ? 'Very close' : band === 'WARM' ? 'Nearby' : 'Further away'}</Text>
+        <Text accessibilityRole="header" style={s.heading}>Nearby players</Text>
+        <Text style={s.muted}>{pingActive ? 'Player ping · ' + (settings.pingDurationSec - pingAge) + 's left' : 'Next ping in ' + clock(settings.pingIntervalSec - pingAge)}</Text>
+        {bands.map(({ value, label }) => {
+          const matches = players.map((player, index) => ({ ...player, index })).filter(player => player.distance === value);
+          if (!matches.length) return null;
+          return <View key={value} style={s.group}>
+            <Text style={s.label}>{label}</Text>
+            <View style={s.wrap}>{matches.map((player, index) => {
+              const ally = role === 'infected' && player.role === 'infected';
+              const text = ally ? player.name + ' · Ally' : matches.length === 1 ? 'Player' : 'Player ' + (index + 1);
+              return <Control key={player.name} selected={selected === player.index} label={text} accessibleLabel={label + ': ' + text}
+                onPress={() => { cancelHold(true); setSelected(player.index); setFeedback(''); }} />;
+            })}</View>
+          </View>;
+        })}
+        {role !== 'innocent' && <>
+          {role === 'doctor' && <Text style={s.muted}>Healing charges · {charges} / {settings.healCharges}</Text>}
+          <Pressable accessibilityRole="button" accessibilityState={{ disabled: !canAct }} disabled={!canAct}
+            accessibilityLabel={'Hold to ' + action.toLowerCase()} accessibilityHint={'Keep pressed for ' + holdMs / 1000 + ' seconds'}
+            onPressIn={beginHold} onPressOut={() => cancelHold(true)} style={[s.button, s.primary, !canAct && s.disabled]}>
+            <Text style={s.primaryText}>{progress ? action + ' · ' + Math.ceil(progress * 100) + '%' : 'Hold to ' + action.toLowerCase() + ' · ' + holdMs / 1000 + 's'}</Text>
+          </Pressable>
+          {!canAct && <Text style={s.muted}>{!charges && role === 'doctor' ? 'No healing charges left.' :
+            role === 'infected' && target.role === 'infected' ? 'Choose a player outside your team.' : 'Move very close to the selected player.'}</Text>}
+        </>}
+        {immunity > 0 && <Text style={s.label}>Protected from bites · {immunity}s</Text>}
+        {feedback !== '' && <Text accessibilityLiveRegion="polite" style={s.body}>{feedback}</Text>}
       </View>
-      <Text style={s.heading}>Nearby signals</Text>
-      <View style={s.wrap}>{contacts.map(contact => <Control key={contact.id} selected={selected === contact.id}
-        label={role === 'infected' && completed.includes(contact.id) ? 'Ally · Jules' : contact.label}
-        onPress={() => { cancelHold(true); setSelected(contact.id); }} />)}
-      </View>
-      {role === 'infected' && <Text style={s.muted}>Ally · Mara · COLD</Text>}
-      {role !== 'innocent' && <>
-        {role === 'doctor' && <Text style={s.muted}>Healing charges · {2 - completed.length} / 2</Text>}
-        <Pressable accessibilityRole="button" accessibilityState={{ disabled: !canAct }} disabled={!canAct}
-          accessibilityLabel={'Hold to ' + action.toLowerCase()} accessibilityHint="Keep pressed for two seconds"
-          onPressIn={beginHold} onPressOut={() => cancelHold(true)}
-          style={[s.button, s.primary, !canAct && s.disabled]}>
-          <Text style={s.primaryText}>{progress ? `${action} · ${Math.ceil(progress * 100)}%` : 'Hold to ' + action.toLowerCase()}</Text>
-        </Pressable>
-        {!canAct && <Text style={s.muted}>{completed.includes(selected) ? 'This interaction is complete.' : 'Move into HOT range to interact.'}</Text>}
-      </>}
-      {feedback !== '' && <Text accessibilityLiveRegion="polite" style={s.body}>{feedback}</Text>}
-      <Control label="Open safe zone" onPress={() => { cancelHold(); onZone(result('survivors', 'Safe zone opened.')); }} />
-      {rolePicker}
-      {options && <View style={s.group}>
-        <Text style={s.muted}>Selected signal proximity</Text>
-        <View style={s.wrap}>{bands.map(value => <Control key={value} label={value} selected={band === value} onPress={() => {
-          cancelHold(true); setDistances(previous => previous.map((old, index) => index === selected - 1 ? value : old));
-          void Haptics.selectionAsync().catch(() => {});
-        }} />)}</View>
-      </View>}
-      <Control label="Finish demo round" onPress={() => { cancelHold(); onEnd(result('survivors', 'The demo round ended with survivors still active.')); }} />
     </>}
+    {demoControls}
   </ScrollView>;
 }
 
-function Control({ label, onPress, primary, selected }: { label: string; onPress: () => void; primary?: boolean; selected?: boolean }) {
-  return <Pressable accessibilityRole="button" accessibilityState={{ selected }} onPress={onPress}
+function Control({ label, accessibleLabel, onPress, primary, selected }: { label: string; accessibleLabel?: string; onPress: () => void; primary?: boolean; selected?: boolean }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={accessibleLabel} accessibilityState={{ selected }} onPress={onPress}
     style={({ pressed }) => [s.button, primary && s.primary, selected && s.selected, pressed && s.pressed]}>
     <Text style={primary ? s.primaryText : s.buttonText}>{label}</Text>
   </Pressable>;
@@ -184,22 +250,16 @@ function Control({ label, onPress, primary, selected }: { label: string; onPress
 
 const s = StyleSheet.create({
   page: { flex: 1, backgroundColor: '#101518' },
-  content: { width: '100%', maxWidth: 580, alignSelf: 'center', padding: 24, gap: 14, paddingBottom: 48 },
+  content: { width: '100%', maxWidth: 580, alignSelf: 'center', padding: 20, gap: 16, paddingBottom: 48 },
   title: { color: '#F2F5ED', fontSize: 38, fontWeight: '800', letterSpacing: -1.2, flexShrink: 1 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  time: { color: '#BCFA74', fontWeight: '700', fontSize: 20, fontVariant: ['tabular-nums'] },
-  card: { backgroundColor: '#192225', padding: 22, gap: 8, borderRadius: 14 },
-  kicker: { fontSize: 16, fontWeight: '700', color: '#BCFA74' },
+  time: { color: '#BCFA74', fontWeight: '700', fontSize: 22, fontVariant: ['tabular-nums'] },
+  card: { backgroundColor: '#192225', padding: 18, gap: 14, borderRadius: 14 },
   body: { fontSize: 18, lineHeight: 25, color: '#F2F5ED' },
   muted: { fontSize: 15, lineHeight: 21, color: '#BAC7C1' },
-  heading: { fontSize: 20, fontWeight: '700', color: '#F2F5ED' },
-  scope: { width: '74%', maxWidth: 220, aspectRatio: 1, alignSelf: 'center', alignItems: 'center', justifyContent: 'center' },
-  ring: { position: 'absolute', borderWidth: 2, borderRadius: 1000 },
-  dot: { width: 12, height: 12, borderRadius: 6 },
-  band: { textAlign: 'center', fontSize: 24, fontWeight: '800', letterSpacing: 3 },
-  caption: { color: '#BAC7C1', textAlign: 'center', fontSize: 16 },
-  tools: { marginTop: 12, gap: 12 },
-  group: { gap: 10 },
+  heading: { fontSize: 23, fontWeight: '700', color: '#F2F5ED' },
+  label: { fontSize: 16, fontWeight: '700', color: '#E6EDDF' },
+  group: { gap: 8 },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   button: { minHeight: 48, borderWidth: 1, borderColor: '#62726F', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12, justifyContent: 'center', alignItems: 'center' },
   buttonText: { color: '#F2F5ED', fontSize: 16, fontWeight: '600' },

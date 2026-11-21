@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { DemoResult } from './Game';
+import { useDemoSettings } from './settings';
 
 const lime = '#BCFA74';
 const paper = '#F2F5ED';
@@ -13,52 +14,60 @@ function Action({ label, onPress, secondary = false }: { label: string; onPress:
   </Pressable>;
 }
 
-function ZoneMap({ outside, shrunk }: { outside: boolean; shrunk: boolean }) {
-  return <View accessible accessibilityLabel={outside ? 'Zone map. You are east of the safe zone.' : 'Zone map. You are inside the safe zone.'} style={s.map}>
+function ZoneMap({ enabled, outside, diameter, showNext }: { enabled: boolean; outside: boolean; diameter: number; showNext: boolean }) {
+  return <View accessible accessibilityLabel={enabled ? (outside ? 'Map. You are east of the play area.' : 'Map. You are inside the play area.') : 'Campus map. Play area limits are off.'} style={s.map}>
     {[0, 1, 2, 3, 4, 5, 6].map(i => <View key={i} style={[s.road, { left: i * 62 - 65 }]} />)}
     {[0, 1, 2, 3, 4].map(i => <View key={i} style={[s.crossStreet, { top: i * 65 - 18 }]} />)}
     <Text style={[s.mapLabel, { top: 12, left: 10 }]}>WEST CAMPUS</Text>
     <Text style={[s.mapLabel, { top: 12, right: 12 }]}>▲ N</Text>
-    <View style={[s.ring, shrunk && s.smaller]}>
-      <View style={s.nextRing} />
-    </View>
+    {enabled && <View style={[s.ring, { width: diameter, height: diameter }]}>
+      {showNext && <View style={s.nextRing} />}
+    </View>}
     <Text style={[s.mapLabel, { bottom: 15, right: 10 }]}>COLLEGE WALK</Text>
     <View style={[s.marker, { left: outside ? '85%' : '44%' }]}><View style={[s.dot, { backgroundColor: outside ? coral : lime }]} /><Text style={s.you}>YOU</Text></View>
   </View>;
 }
 
-export function Zone({ onBack, onEliminated }: { onBack: () => void; onEliminated: () => void }) {
+export function Zone({ showDemoControls, onEliminated }: { showDemoControls: boolean; onEliminated: () => void }) {
+  const { settings } = useDemoSettings();
   const [deadline, setDeadline] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now);
-  const [shrinkAt] = useState(() => Date.now() + 30000);
+  const [startedAt] = useState(Date.now);
   useEffect(() => {
+    if (!settings.zoneEnabled) return;
     const id = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(id);
-  }, []);
-  const outside = deadline !== null;
+  }, [settings.zoneEnabled]);
+  const outside = settings.zoneEnabled && deadline !== null;
   const remaining = deadline === null ? 0 : Math.max(0, Math.ceil((deadline - now) / 1000));
   const eliminated = outside && remaining === 0;
-  const nextShrink = Math.max(0, Math.ceil((shrinkAt - now) / 1000));
-  return <ScrollView style={s.page} contentContainerStyle={s.content}>
-    <Text style={s.caption}>CAMPUS FIELD MAP</Text>
-    <Text accessibilityRole="header" style={s.title}>Safe zone</Text>
-    <ZoneMap outside={outside} shrunk={!nextShrink} />
-    <Text style={s.meta}>●  Current boundary      ◌  Next boundary</Text>
-    <View style={[s.panel, outside && { borderColor: coral }]}>
-      <Text accessibilityLiveRegion="polite" style={[s.heading, { color: outside ? coral : lime }]}>{eliminated ? 'Eliminated' : outside ? 'Outside the zone' : 'Inside the zone'}</Text>
-      <Text style={s.detail}>{eliminated ? 'The return window expired.' : outside ? 'Head west · 18 m to safety' : '24 m inside the boundary'}</Text>
-      <Text style={s.number}>{outside ? remaining + ' s' : (nextShrink ? '00:' + String(nextShrink).padStart(2, '0') : '45 m')}</Text>
-      <Text style={s.meta}>{outside ? 'Return window' : nextShrink ? 'Until the next shrink' : 'Current zone radius'}</Text>
-    </View>
-    {eliminated ? <Action label="See round recap" onPress={onEliminated} /> : <>
-      <Action label={outside ? 'Return to safety' : 'Step outside the zone'} onPress={() => {
+  useEffect(() => {
+    if (eliminated) onEliminated();
+  }, [eliminated, onEliminated]);
+  const interval = Math.max(1, settings.zoneShrinkSec);
+  const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const shrinks = Math.min(5, Math.floor(elapsed / interval));
+  const remainingRadius = Math.pow(0.8, shrinks);
+  const radius = Math.round(settings.zoneRadiusM * remainingRadius);
+  const nextShrink = interval - elapsed % interval;
+  const warning = shrinks < 5 && nextShrink <= settings.zoneWarningSec;
+  return <View style={{ gap: 10 }}>
+    <Text accessibilityRole="header" style={s.heading}>Map</Text>
+    <ZoneMap enabled={settings.zoneEnabled} outside={outside} diameter={186 * remainingRadius} showNext={shrinks < 5} />
+    {settings.zoneEnabled ? <>
+      <Text style={s.meta}>●  Play area · {radius} m radius{shrinks < 5 ? '      ◌  Next play area' : ''}</Text>
+      <View style={[s.panel, outside && { borderColor: coral }]}>
+        <Text accessibilityLiveRegion="polite" style={[s.heading, { color: outside ? coral : lime }]}>{outside ? 'Outside the play area' : 'Inside the play area'}</Text>
+        {outside && <><Text style={s.detail}>Head west · 18 m to safety</Text><Text style={s.number}>{remaining} s to return</Text></>}
+        {warning && <Text style={s.detail}>Play area shrinks in {nextShrink} s</Text>}
+      </View>
+      {showDemoControls && !eliminated && <Action secondary label={outside ? 'Simulate return to play area' : 'Simulate leaving play area'} onPress={() => {
         const time = Date.now();
         setNow(time);
-        setDeadline(outside ? null : time + 10000);
-      }} />
-      {!outside && <Action secondary label="Back to radar" onPress={onBack} />}
-    </>}
-  </ScrollView>;
+        setDeadline(outside ? null : time + settings.zoneGraceSec * 1000);
+      }} />}
+    </> : <Text style={s.meta}>House Party Mode · Play area limits off</Text>}
+  </View>;
 }
 
 export function Recap({ result, onReplay }: { result: DemoResult; onReplay: () => void }) {
@@ -68,9 +77,7 @@ export function Recap({ result, onReplay }: { result: DemoResult; onReplay: () =
   const duration = Math.floor(result.elapsedSec / 60) + ':' + String(result.elapsedSec % 60).padStart(2, '0');
   const rows = [
     [result.name + ' (you)', eliminated ? 'Eliminated' : result.role],
-    ['Mara', infectedWin || result.role !== 'infected' ? 'infected' : 'innocent'],
-    ['Jules', infectedWin ? 'infected' : 'innocent'],
-    ['Remy', infectedWin ? 'infected' : result.role === 'doctor' ? 'innocent' : 'doctor'],
+    ...result.standings.map(player => [player.name, player.role]),
   ];
   return <ScrollView style={s.page} contentContainerStyle={s.content}>
     <Text style={s.caption}>ROUND RECAP</Text>
@@ -102,8 +109,7 @@ const s = StyleSheet.create({
   crossStreet: { position: 'absolute', left: '-15%', width: '130%', height: 5, backgroundColor: '#364640', transform: [{ rotate: '14deg' }] },
   mapLabel: { position: 'absolute', fontSize: 10, letterSpacing: 1.2, color: '#CDDBD0', fontWeight: '700' },
   ring: { width: 186, height: 186, borderRadius: 100, borderWidth: 2, borderColor: lime, backgroundColor: 'rgba(155,206,94,0.11)', alignItems: 'center', justifyContent: 'center' },
-  smaller: { width: 133, height: 133 },
-  nextRing: { width: '66%', aspectRatio: 1, borderWidth: 2, borderColor: '#D5ECAC', borderStyle: 'dashed', borderRadius: 70 },
+  nextRing: { width: '80%', aspectRatio: 1, borderWidth: 2, borderColor: '#D5ECAC', borderStyle: 'dashed', borderRadius: 100 },
   marker: { position: 'absolute', top: '54%', alignItems: 'center', gap: 2 },
   dot: { width: 14, height: 14, borderRadius: 7, borderWidth: 2, borderColor: paper },
   you: { backgroundColor: '#101518', color: paper, paddingHorizontal: 5, fontSize: 10, fontWeight: '800' },
