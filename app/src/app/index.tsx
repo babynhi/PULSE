@@ -20,7 +20,7 @@ export default function Home() {
               </Pressable>
             </Link>
           ))}
-          <Link href="/ble-lab" style={styles.lab}>Bluetooth Lab</Link>
+          <Link href="/ble-lab" style={styles.lab}>Game and Bluetooth Labs</Link>
         </View>
       </ScrollView>
     </SafeAreaView>

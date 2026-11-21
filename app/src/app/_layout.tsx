@@ -13,7 +13,7 @@ export default function Navigation() {
       }}>
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="tutorial" options={{ title: 'How to Play' }} />
-        <Stack.Screen name="ble-lab" options={{ title: 'Bluetooth Lab' }} />
+        <Stack.Screen name="ble-lab" options={{ title: 'Game and Bluetooth Labs' }} />
         <Stack.Screen name="host" options={{ title: 'Host Game' }} />
         <Stack.Screen name="join" options={{ title: 'Join Game' }} />
         <Stack.Screen name="demo" options={{ title: 'Demo round' }} />
