@@ -1,0 +1,4 @@
+interface:
+  display_name: "Coordinate Work"
+  short_description: "Plan and track shared GitHub agent tasks"
+  default_prompt: "Use $coordinate-work to pick up the next assigned issue or show the team queue."
