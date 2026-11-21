@@ -12,7 +12,8 @@ export interface Thresholds {
 }
 
 // Starting guesses. We'll calibrate these with your two iPhones in Step 6.
-export const DEFAULT_THRESHOLDS: Thresholds = { hot: -62, warm: -78 };
+// Calibrated Nov 21 on iPhone vs nRF Connect. Re-check with two PULSE phones.
+export const DEFAULT_THRESHOLDS: Thresholds = { hot: -63, warm: -70 };
 
 interface Track {
     samples: { t: number; rssi: number }[];
