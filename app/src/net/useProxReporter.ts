@@ -16,7 +16,9 @@ export function useProxReporter(onStatus: (text: string) => void = () => { }) {
 
     // Keep the latest callback without restarting Bluetooth when it changes.
     const statusRef = useRef(onStatus);
-    statusRef.current = onStatus;
+    useEffect(() => {
+        statusRef.current = onStatus;
+    }, [onStatus]);
 
     useEffect(() => {
         if (!active || bleId === null) return;

@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { ProximityTracker, Reading, Zone } from './src/bluetooth/proximity';
+import { DEFAULT_THRESHOLDS, ProximityTracker, Reading, Zone } from './src/bluetooth/proximity';
 import { startBluetooth, stopBluetooth } from './src/bluetooth/scanner';
 
 const COLORS: Record<Zone, string> = { HOT: '#ff3b3b', WARM: '#f59e0b', COLD: '#3b82f6' };
 const myNumber = 1 + Math.floor(Math.random() * 999); // different on each phone
 
 export default function App() {
-  const tracker = useRef(new ProximityTracker()).current;
+  const tracker = useRef(new ProximityTracker());
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState('Tap Start on both phones');
   const [readings, setReadings] = useState<Reading[]>([]);
-  const [th, setTh] = useState(tracker.thresholds);
+  const [th, setTh] = useState(DEFAULT_THRESHOLDS);
   const calibSamples = useRef<number[] | null>(null);
   const [calibrating, setCalibrating] = useState(false);
 
@@ -22,12 +22,12 @@ export default function App() {
     startBluetooth(
       myNumber,
       (n, rssi) => {
-        tracker.add(n, rssi);
+        tracker.current.add(n, rssi);
         calibSamples.current?.push(rssi);
       },
       setStatus,
     );
-    const timer = setInterval(() => setReadings(tracker.snapshot()), 300);
+    const timer = setInterval(() => setReadings(tracker.current.snapshot()), 300);
     return () => {
       clearInterval(timer);
       stopBluetooth();
@@ -49,8 +49,8 @@ export default function App() {
   }, [running, closest]);
 
   function nudge(key: 'hot' | 'warm', delta: number) {
-    tracker.thresholds = { ...tracker.thresholds, [key]: tracker.thresholds[key] + delta };
-    setTh(tracker.thresholds);
+    tracker.current.thresholds = { ...tracker.current.thresholds, [key]: tracker.current.thresholds[key] + delta };
+    setTh(tracker.current.thresholds);
   }
 
   // Hold both phones at "bite distance" for 5 s; HOT line goes just below the median signal
@@ -63,8 +63,8 @@ export default function App() {
       setCalibrating(false);
       if (s.length < 5) return setStatus('Calibration failed: the other phone wasn’t heard');
       const hot = Math.round(s[Math.floor(s.length / 2)] - 4);
-      tracker.thresholds = { hot, warm: hot - 14 };
-      setTh(tracker.thresholds);
+      tracker.current.thresholds = { hot, warm: hot - 14 };
+      setTh(tracker.current.thresholds);
       setStatus(`Calibrated: HOT ≥ ${hot}, WARM ≥ ${hot - 14}`);
     }, 5000);
   }
@@ -102,7 +102,7 @@ export default function App() {
         <Btn small label="−" onPress={() => nudge('warm', -2)} />
         <Btn small label="+" onPress={() => nudge('warm', 2)} />
       </View>
-      <Text style={styles.dim}>Calibrate: hold both phones at arm's length, then tap.</Text>
+      <Text style={styles.dim}>Calibrate: hold both phones at arm’s length, then tap.</Text>
       <Btn label={calibrating ? 'Calibrating… hold still' : 'Calibrate HOT distance'} onPress={calibrate} />
     </ScrollView>
   );
