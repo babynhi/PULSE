@@ -40,6 +40,14 @@ rtk proxy npx tsc --noEmit   # typecheck
 ## Working conventions
 
 - Keep changes focused on the requested task and follow existing code patterns.
+- Before starting a task, check `git status --short --branch` and identify the
+  current branch. Keep work on the branch the user requested; do not switch to
+  `main` or another branch implicitly. If the requested branch is unclear,
+  continue read-only inspection and ask before making branch-dependent changes.
+- Before committing or pushing, re-check the branch and upstream with
+  `git status --short --branch` and `git branch --show-current`. Push only the
+  intended branch to its intended upstream; never push merely because a task is
+  complete. If the target is ambiguous, leave the changes local and ask.
 - Keep gameplay rules consistent with the PRD; record agreed changes there.
 - Keep the PRD in `docs/`; put agent behavior instructions in `AGENTS.md` files.
 - Preserve unrelated work and never commit credentials or local secrets.
