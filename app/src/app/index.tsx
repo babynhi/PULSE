@@ -14,7 +14,7 @@ const { width: W, height: H } = Dimensions.get('window');
 const MENU = [
   { label: 'Join a Game', href: '/join' },
   { label: 'Host a Game', href: '/host' },
-  { label: 'Settings', href: '/game-settings' },
+
 ] as const;
 
 export default function Home() {
