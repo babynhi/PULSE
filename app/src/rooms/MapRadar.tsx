@@ -14,7 +14,7 @@ import * as Location from 'expo-location';
 import type { PlayerPosition } from '../net/useLocReporter';
 import { ProximityRadar, RadarScope, SignalLabel, type RadarProps } from './RadarScope';
 import { mapColors, radarBaseSize, roleRadarTint, streetStyles } from './radarStyle';
-import { AllyPins, PingDots, ZoneOverlay } from './ZoneLayer';
+import { AllyPins, InfectionMarks, PingDots, ZoneOverlay } from './ZoneLayer';
 import {
   angleDelta,
   beamScreenAngle,
@@ -251,7 +251,8 @@ function PlayerMap({ room, position, now, band }: RadarProps & { position: Playe
       >
         {room.zone && <ZoneOverlay zone={room.zone} flash={room.zone.warning && Math.floor(now / 500) % 2 === 0} />}
         <AllyPins allies={room.allies} />
-        <PingDots pings={room.pings} pingAt={room.pingAt} now={now} />
+        <InfectionMarks marks={room.infectionMarks} now={now} />
+        {room.me?.role === 'infected' && <PingDots pings={room.pings} pingAt={room.pingAt} now={now} />}
       </MapView>
       {(following || point) && (
         <View pointerEvents="none" style={point

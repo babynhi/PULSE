@@ -26,11 +26,19 @@ import {
     ZoneView,
     LatLng,
     AllyPos,
+    FeedItem,
+    Mvp,
     ZONE_SHRINK_FACTOR,
     ZONE_MIN_RADIUS_M,
     ZONE_WARNING_MS,
     PING_INTERVAL_MS,
     DEMO_PING_INTERVAL_MS,
+    PING_DELAY_MS,
+    DEMO_PING_DELAY_MS,
+    HEAL_WINDOW_MS,
+    INFECTION_MARK_MS,
+    InfectionMark,
+    PingDot,
 } from '../../shared/protocol';
 
 /** A GPS fix older than this is treated as unknown (never counts as "outside"). */
@@ -38,7 +46,9 @@ export const LOC_STALE_MS = 30_000;
 /** If nobody has a fix this long into the round, the zone is turned off for the round. */
 export const ZONE_FIX_WAIT_MS = 30_000;
 /** Pings are fuzzed by a random distance in this range (metres). */
-export const PING_FUZZ_M: [number, number] = [10, 20];
+export const PING_FUZZ_M: [number, number] = [20, 40];
+/** Infection markers are placed this far (random) from where it really happened. */
+export const MARK_FUZZ_M: [number, number] = [5, 15];
 
 interface ZoneState {
     center: LatLng;
@@ -69,7 +79,8 @@ export const DEMO_COLD_M = 50;
 export const DEMO_FIX_FRESH_MS = 10_000;
 /** How long a demo bot must stay HOT on a target before it starts a bite / heal. */
 export const DEMO_BITE_AFTER_MS = 2000;
-export const DEMO_HEAL_AFTER_MS = 1500;
+/** Doctors react faster than biters, so a demo doctor walking up to an infected usually wins the race. */
+export const DEMO_HEAL_AFTER_MS = 1000;
 /** Spawn ring around the host. */
 export const DEMO_SPAWN_M: [number, number] = [20, 60];
 /** Keep this far inside the zone edge (and within this radius of spawn before the zone exists). */
@@ -117,6 +128,8 @@ export interface Player {
     heals: number;
     timesCured: number;
     outsideZoneSince: number | null;
+    /** epoch ms this player was (last) infected; 0 = not infected. Drives the heal window. */
+    infectedAt?: number;
 }
 
 interface Hold {
@@ -158,14 +171,27 @@ export class Room {
     /** simulated demo players' walking state, by player id */
     demoBots = new Map<string, DemoBot>();
     private lastDemoStep = 0;
+    /** anonymous kill feed for this round (newest last) */
+    feed: FeedItem[] = [];
+    private feedSeq = 0;
+    /** playerId -> ms into the round when they were first infected (0 = started infected) */
+    private firstInfectedAt = new Map<string, number>();
     /** latest GPS fix per player */
     positions = new Map<string, LatLng & { at: number }>();
     zone: ZoneState | null = null;
     /** waiting for the first GPS fix to place the zone */
     private zonePending = false;
-    /** last ping: playerId -> fuzzed position */
+    /** released ping (what infected see): playerId -> fuzzed position, sampled at pingSampledAt */
     pings = new Map<string, LatLng>();
+    /** when the released ping became visible */
     pingAt: number | null = null;
+    pingSampledAt: number | null = null;
+    /** sampled but not yet released (held back by the ping delay) */
+    private pingQueue: { at: number; dots: Map<string, LatLng> }[] = [];
+    private lastPingSample: number | null = null;
+    /** recent anonymous infection spots */
+    marks: InfectionMark[] = [];
+    private markSeq = 0;
     /** set whenever something visible changed; index.ts re-broadcasts and clears it */
     dirty = true;
 
@@ -247,7 +273,7 @@ export class Room {
         } else {
             p.connected = false;
             p.disconnectedAt = now;
-            this.eliminate(p, now, 'Left the game');
+            this.eliminate(p, now, 'Left the game', 'Someone left the game');
             if (this.hostId === playerId) this.migrateHost();
         }
         this.dirty = true;
@@ -390,10 +416,14 @@ export class Room {
                 heals: 0,
                 timesCured: 0,
                 outsideZoneSince: null,
+                infectedAt: 0,
             });
         });
         this.resetZone();
         this.events = [];
+        this.feed = [];
+        this.firstInfectedAt.clear();
+        for (const p of this.players.values()) if (p.role === 'infected') this.firstInfectedAt.set(p.id, 0);
         this.result = null;
         this.prox.clear();
         this.debugProx.clear();
@@ -460,6 +490,8 @@ export class Room {
             this.endsAt = now + this.settings.durationSec * 1000;
             this.zonePending = this.settings.zoneEnabled;
             this.pingAt = null;
+            // Patient zero's heal window starts with the round.
+            for (const p of this.players.values()) if (p.role === 'infected') p.infectedAt = now;
             this.dirty = true;
         }
         if (this.phase !== 'playing') return;
@@ -472,7 +504,7 @@ export class Room {
                 p.disconnectedAt !== null &&
                 now - p.disconnectedAt > this.settings.reconnectSec * 1000
             ) {
-                this.eliminate(p, now, 'Did not reconnect in time');
+                this.eliminate(p, now, 'Did not reconnect in time', 'Someone lost signal and was eliminated');
             }
         }
         if (this.phase !== 'playing') return;
@@ -496,15 +528,42 @@ export class Room {
         return [...this.players.values()].filter((p) => p.status === 'active');
     }
 
-    private eliminate(p: Player, now: number, why: string) {
+    private eliminate(p: Player, now: number, why: string, feedText = 'Someone was eliminated') {
         if (p.status === 'eliminated') return;
         p.status = 'eliminated';
+        if (this.phase === 'playing') this.pushFeed('eliminated', `${feedText}… ${this.survivorsLeft(p)}`, now);
         this.cancelHoldsInvolving(p.id, 'Player left the game');
         this.prox.delete(p.id);
         this.events.push({ t: now - (this.startedAt ?? now), kind: 'eliminated', target: p.name });
         this.out.notice(p.id, { kind: 'eliminated', text: `You were eliminated. ${why}.` });
         this.dirty = true;
         this.checkVictory(now);
+    }
+
+    /** "3 survivors left" (optionally not counting `except`, who is about to leave the count). */
+    private survivorsLeft(except?: Player) {
+        const n = this.active().filter((p) => p.role !== 'infected' && p !== except).length;
+        return n === 1 ? '1 survivor left' : `${n} survivors left`;
+    }
+
+    /** Anonymous, name-free feed line for everyone. */
+    private pushFeed(kind: FeedItem['kind'], text: string, now: number) {
+        const t = this.tally();
+        this.feed.push({ id: ++this.feedSeq, at: now, kind, text, ...t });
+        if (this.feed.length > 20) this.feed.shift();
+        this.dirty = true;
+    }
+
+    /** Active infected vs active survivors (innocent + doctor). */
+    tally() {
+        const act = this.active();
+        const infected = act.filter((p) => p.role === 'infected').length;
+        return { infectedLeft: infected, survivorsLeft: act.length - infected };
+    }
+
+    /** Has this infected player been infected for HEAL_WINDOW_MS or more (cure no longer possible)? */
+    infectionPermanent(p: Player, now: number) {
+        return p.role === 'infected' && now - (p.infectedAt || this.startedAt || now) >= HEAL_WINDOW_MS;
     }
 
     private checkVictory(now: number) {
@@ -540,8 +599,32 @@ export class Room {
                 }))
                 .sort((a, b) => rank(a) - rank(b) || b.bites - a.bites),
             events: [...this.events],
+            mvps: this.mvps(all, now),
         };
         this.dirty = true;
+    }
+
+    /** Awards for the recap card. Names are fine here: the round is over and roles are public. */
+    private mvps(all: Player[], now: number): Mvp[] {
+        const out: Mvp[] = [];
+        const roundMs = now - (this.startedAt ?? now);
+        const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+        const top = (score: (p: Player) => number) =>
+            all.filter((p) => score(p) > 0).sort((a, b) => score(b) - score(a))[0];
+        const biter = top((p) => p.bites);
+        if (biter) out.push({ title: 'Most infections', name: biter.name, detail: `${biter.bites} ${biter.bites === 1 ? 'bite' : 'bites'}` });
+        const survivors = all.filter((p) => p.startRole !== 'infected');
+        const lasted = (p: Player) => this.firstInfectedAt.get(p.id) ?? (p.status === 'active' ? Infinity : roundMs);
+        const longest = survivors.sort((a, b) => lasted(b) - lasted(a))[0];
+        if (longest) {
+            const ms = lasted(longest);
+            out.push({ title: 'Longest survivor', name: longest.name, detail: ms === Infinity ? 'Never infected' : `Lasted ${clock(ms)}` });
+        }
+        const medic = top((p) => p.heals);
+        if (medic) out.push({ title: 'Best doctor', name: medic.name, detail: `${medic.heals} ${medic.heals === 1 ? 'cure' : 'cures'}` });
+        const zero = all.filter((p) => p.startRole === 'infected');
+        if (zero.length) out.push({ title: 'Patient zero', name: zero.map((p) => p.name).join(' & '), detail: 'Started infected' });
+        return out;
     }
 
     // ---------- proximity ----------
@@ -625,6 +708,7 @@ export class Room {
         if (actor.role === 'doctor') {
             if (actor.healsLeft <= 0) throw new GameError('No heals left');
             if (target.role !== 'infected') throw new GameError('Heal had no effect');
+            if (this.infectionPermanent(target, now)) throw new GameError('Too late: that infection is permanent');
             return 'heal';
         }
         throw new GameError('Innocents can’t bite or heal');
@@ -677,7 +761,11 @@ export class Room {
         const wasDoctor = target.role === 'doctor';
         target.role = 'infected';
         target.roleAcked = target.isBot;
+        target.infectedAt = now;
         actor.bites++;
+        this.addMark(target, actor, now);
+        if (!this.firstInfectedAt.has(target.id)) this.firstInfectedAt.set(target.id, now - (this.startedAt ?? now));
+        this.pushFeed('infected', `Someone was infected… ${this.survivorsLeft()}`, now);
         this.cancelAction(target.id, 'You were infected');
         this.events.push({ t: now - (this.startedAt ?? now), kind: 'bite', actor: actor.name, target: target.name });
         this.out.actionEnd(actor.id, { kind: 'bite', ok: true });
@@ -688,13 +776,25 @@ export class Room {
         else this.checkVictory(now);
     }
 
+    /** Drop an anonymous, fuzzed marker near where the bite happened. */
+    private addMark(target: Player, actor: Player, now: number) {
+        const f = this.fix(target.id, now) ?? this.fix(actor.id, now);
+        if (!f) return;
+        const [lo, hi] = MARK_FUZZ_M;
+        const at = offsetMeters(f, lo + this.rng() * (hi - lo), this.rng() * 360);
+        this.marks.push({ id: ++this.markSeq, lat: at.lat, lng: at.lng, at: now });
+        this.marks = this.marks.filter((m) => now - m.at < INFECTION_MARK_MS).slice(-20);
+    }
+
     private applyHeal(actor: Player, target: Player, now: number) {
         target.role = 'innocent';
+        target.infectedAt = 0;
         target.roleAcked = target.isBot;
         target.immuneUntil = now + this.settings.immunitySec * 1000;
         target.timesCured++;
         actor.healsLeft--;
         actor.heals++;
+        this.pushFeed('cured', `Someone was cured. ${this.survivorsLeft()[0].toUpperCase()}${this.survivorsLeft().slice(1)}`, now);
         this.cancelAction(target.id, 'You were cured');
         this.events.push({ t: now - (this.startedAt ?? now), kind: 'heal', actor: actor.name, target: target.name });
         this.out.actionEnd(actor.id, { kind: 'heal', ok: true });
@@ -753,11 +853,12 @@ export class Room {
         this.tick(now);
     }
 
-    debugSetRole(playerId: string, role: Role) {
+    debugSetRole(playerId: string, role: Role, now = Date.now()) {
         this.requireDebug();
         const p = this.players.get(playerId);
         if (!p || this.phase !== 'playing') return;
         p.role = role;
+        p.infectedAt = role === 'infected' ? now : 0;
         if (role === 'doctor' && p.healsLeft === 0) p.healsLeft = this.settings.healCharges;
         this.dirty = true;
     }
@@ -962,6 +1063,10 @@ export class Room {
         this.zonePending = false;
         this.pings.clear();
         this.pingAt = null;
+        this.pingSampledAt = null;
+        this.pingQueue = [];
+        this.lastPingSample = null;
+        this.marks = [];
         this.demoBots.clear();
         this.lastDemoStep = 0;
         for (const p of this.players.values()) p.outsideZoneSince = null;
@@ -1017,7 +1122,7 @@ export class Room {
         if (z.shrinksAt !== null) {
             if (z.warnedFor !== z.shrinksAt && z.shrinksAt - now <= ZONE_WARNING_MS) {
                 z.warnedFor = z.shrinksAt;
-                for (const p of this.active()) this.out.notice(p.id, { kind: 'info', text: 'The safe zone shrinks in 30 seconds!' });
+                for (const p of this.active()) this.out.notice(p.id, { kind: 'info', text: `The safe zone shrinks in ${ZONE_WARNING_MS / 1000} seconds!` });
                 this.dirty = true;
             }
             if (now >= z.shrinksAt) {
@@ -1043,7 +1148,7 @@ export class Room {
                 this.dirty = true;
             } else if (outside && p.outsideZoneSince !== null && now - p.outsideZoneSince >= graceMs) {
                 p.outsideZoneSince = null;
-                this.eliminate(p, now, 'You stayed outside the safe zone');
+                this.eliminate(p, now, 'You stayed outside the safe zone', 'Someone left the zone and was eliminated');
                 if (this.phase !== 'playing') return;
             }
         }
@@ -1051,25 +1156,63 @@ export class Room {
 
     /** Rooms with demo players ping faster so the demo shows movement. */
     pingEveryMs() {
-        return [...this.players.values()].some((p) => p.demo) ? DEMO_PING_INTERVAL_MS : PING_INTERVAL_MS;
+        return this.hasDemo() ? DEMO_PING_INTERVAL_MS : PING_INTERVAL_MS;
     }
 
+    pingDelayMs() {
+        return this.hasDemo() ? DEMO_PING_DELAY_MS : PING_DELAY_MS;
+    }
+
+    private hasDemo() {
+        return [...this.players.values()].some((p) => p.demo);
+    }
+
+    /**
+     * Every interval, sample every active player's position fuzzed 20-40 m. A sample is held back
+     * for the ping delay and only then released, so infected only ever see where survivors WERE.
+     * Exact positions never leave the server.
+     */
     private stepPing(now: number) {
         const every = this.pingEveryMs();
-        if (this.pingAt !== null && now - this.pingAt < every) return;
-        if (this.pingAt === null && now - (this.startedAt ?? now) < every) return; // first ping after one interval
-        this.pingAt = now;
-        this.pings.clear();
-        for (const p of this.active()) {
-            const f = this.fix(p.id, now);
-            if (!f) continue;
-            const [lo, hi] = PING_FUZZ_M;
-            this.pings.set(p.id, offsetMeters(f, lo + this.rng() * (hi - lo), this.rng() * 360));
+        const since = this.lastPingSample ?? this.startedAt ?? now;
+        if (now - since >= every) {
+            this.lastPingSample = now;
+            const dots = new Map<string, LatLng>();
+            for (const p of this.active()) {
+                const f = this.fix(p.id, now);
+                if (!f) continue;
+                const [lo, hi] = PING_FUZZ_M;
+                dots.set(p.id, offsetMeters(f, lo + this.rng() * (hi - lo), this.rng() * 360));
+            }
+            this.pingQueue.push({ at: now, dots });
         }
-        this.dirty = true;
+        const delay = this.pingDelayMs();
+        while (this.pingQueue.length && now - this.pingQueue[0].at >= delay) {
+            const next = this.pingQueue.shift()!;
+            this.pings = next.dots;
+            this.pingSampledAt = next.at;
+            this.pingAt = now;
+            this.dirty = true;
+        }
     }
 
     // ---------- views ----------
+
+    /**
+     * Survivors only: the closest proximity bucket to ANY active infected player (BLE, or GPS for
+     * demo players). Says how close danger is, never who. Infected players always get null.
+     */
+    dangerFor(me: Player, now: number): Zone | null {
+        if (this.phase !== 'playing' || me.status !== 'active' || me.role === null || me.role === 'infected') return null;
+        let best: Zone | null = null;
+        const rank = { HOT: 3, WARM: 2, COLD: 1 } as const;
+        for (const p of this.active()) {
+            if (p === me || p.role !== 'infected') continue;
+            const z = this.proximityBetween(me, p, now);
+            if (z && (!best || rank[z] > rank[best])) best = z;
+        }
+        return best;
+    }
 
     private zoneView(now: number): ZoneView {
         const z = this.zone!;
@@ -1095,22 +1238,29 @@ export class Room {
     }
 
     /**
-     * Role-based map: survivors (innocent, doctor) see the auto-ping of every other active player,
-     * anonymous and fuzzed. Infected never get pings, only live ally pins (see alliesFor).
+     * Role-based map. Innocents and the doctor see nobody else (no pings, no pins).
+     * Infected see fellow infected live (alliesFor) and survivors only as the delayed, fuzzed ping.
      * Uses the viewer's role right now, so a bite or a cure switches the map at once.
      */
     private pingsVisibleTo(me: Player | undefined) {
-        return !!me && this.phase === 'playing' && me.status === 'active' && me.role !== null && me.role !== 'infected';
+        return !!me && this.phase === 'playing' && me.status === 'active' && me.role === 'infected';
     }
 
-    private pingsFor(me: Player | undefined): LatLng[] {
-        if (!this.pingsVisibleTo(me)) return [];
-        const out: LatLng[] = [];
+    private pingsFor(me: Player | undefined): PingDot[] {
+        if (!this.pingsVisibleTo(me) || this.pingSampledAt === null) return [];
+        const out: PingDot[] = [];
         for (const [id, l] of this.pings) {
-            if (id === me!.id || this.players.get(id)?.status !== 'active') continue;
-            out.push({ lat: l.lat, lng: l.lng });
+            const p = this.players.get(id);
+            // Only survivors are pinged: allies are already shown live.
+            if (id === me!.id || p?.status !== 'active' || p.role === 'infected') continue;
+            out.push({ lat: l.lat, lng: l.lng, at: this.pingSampledAt });
         }
         return out;
+    }
+
+    private marksFor(now: number): InfectionMark[] {
+        if (this.phase !== 'playing') return [];
+        return this.marks.filter((m) => now - m.at < INFECTION_MARK_MS).map((m) => ({ ...m }));
     }
 
     viewFor(playerId: string, now: number): RoomView {
@@ -1124,7 +1274,9 @@ export class Room {
                 if (p.id === me.id || p.status !== 'active') continue;
                 const ally = roleVisible && me.role === 'infected' && p.role === 'infected';
                 const zone = this.proximityBetween(me, p, now);
-                radar.push(ally ? { bleId: p.bleId, zone, ally, name: p.name } : { bleId: p.bleId, zone, ally });
+                const entry: RadarEntry = ally ? { bleId: p.bleId, zone, ally, name: p.name } : { bleId: p.bleId, zone, ally };
+                if (me.role === 'doctor' && this.phase === 'playing' && this.infectionPermanent(p, now)) entry.noHeal = true;
+                radar.push(entry);
                 const z = this.debugProx.get(pairKey(me.id, p.id));
                 if (z) debugProx[p.bleId] = z;
             }
@@ -1163,6 +1315,7 @@ export class Room {
                         immuneUntil: me.immuneUntil,
                         status: me.status,
                         outsideZoneSince: me.outsideZoneSince,
+                        danger: this.dangerFor(me, now),
                         graceEndsAt:
                             me.outsideZoneSince !== null ? me.outsideZoneSince + this.settings.zoneGraceSec * 1000 : null,
                     }
@@ -1175,7 +1328,10 @@ export class Room {
             allies: this.alliesFor(me, now),
             pings: this.pingsFor(me),
             pingAt: this.pingsVisibleTo(me) ? this.pingAt : null,
+            infectionMarks: this.marksFor(now),
+            tally: this.phase === 'playing' ? this.tally() : null,
             pingEveryMs: this.pingEveryMs(),
+            feed: inGame ? this.feed.slice(-5) : [],
         };
     }
 }

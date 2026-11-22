@@ -24,6 +24,17 @@ export function pingOpacity(pingAt: number | null, now: number, fadeMs = 25_000)
   return pingAt === null ? 0 : Math.max(0, Math.min(1, 1 - (now - pingAt) / fadeMs));
 }
 
+/** Linear fade from 1 to 0 over `lifeMs` after `at`. */
+export function markOpacity(at: number, now: number, lifeMs: number) {
+  return Math.max(0, Math.min(1, 1 - (now - at) / lifeMs));
+}
+
+/** "12s ago", "1m 5s ago": how stale a delayed ping is. */
+export function agoLabel(at: number, now: number) {
+  const sec = Math.max(0, Math.floor((now - at) / 1000));
+  return sec < 60 ? sec + 's ago' : Math.floor(sec / 60) + 'm ' + (sec % 60) + 's ago';
+}
+
 export type Keyed = LatLng & { key: string };
 
 function metersBetween(a: LatLng, b: LatLng) {

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 import { GoogleRoadMap, worldMetersAt } from './GoogleRoadMap.web';
 import { nextHeading, type HeadingTrack } from './heading';
-import { allyInitials, pingOpacity } from './mapGeometry';
+import { INFECTION_MARK_MS } from '../../../shared/protocol';
+import { agoLabel, allyInitials, markOpacity, pingOpacity } from './mapGeometry';
 import { ProximityRadar, RadarScope, SignalLabel, type RadarProps } from './RadarScope';
 import { mapColors, radarBaseSize, roleRadarTint } from './radarStyle';
 
@@ -35,7 +36,7 @@ export function MapWithRadar({ room, position, now, band, demoFallback }: RadarP
     message={apiKey ? 'Google Maps unavailable · Proximity only' : 'Google Maps is not configured · Proximity only'} />;
 
   const zone = room.zone;
-  const pingAlpha = pingOpacity(room.pingAt, now);
+  const pingAlpha = room.me?.role === 'infected' ? Math.max(0.45, pingOpacity(room.pingAt, now, 40_000)) : 0;
   const flash = zone?.warning && Math.floor(now / 500) % 2 === 0;
   return <View style={styles.surface}>
     <GoogleRoadMap apiKey={apiKey} player={position} zone={zone} onUnavailable={onUnavailable}
@@ -56,12 +57,23 @@ export function MapWithRadar({ room, position, now, band, demoFallback }: RadarP
               <circle cx={center.x} cy={center.y} r={radius} fill="none" stroke={flash ? mapColors.infected : mapColors.zoneEdge}
                 strokeWidth={flash ? 4 : 3} strokeDasharray="10 8" />
             </>}
+            {room.infectionMarks?.map(mark => {
+              const point = projection.fromLatLngToContainerPixel(mark);
+              const o = markOpacity(mark.at, now, INFECTION_MARK_MS);
+              return point && o > 0 && <g key={'mark-' + mark.id} opacity={o}>
+                <title>Someone was infected here · {agoLabel(mark.at, now)}</title>
+                <circle cx={point.x} cy={point.y} r="16" fill="rgba(230,57,70,0.22)" stroke={mapColors.infected} strokeWidth="2" />
+                <text x={point.x} y={point.y} textAnchor="middle" dy="0.35em" fontSize="14">🧟</text>
+              </g>;
+            })}
             {pingAlpha > 0 && room.pings?.map((ping, i) => {
               const point = projection.fromLatLngToContainerPixel(ping);
               return point && <g key={i} opacity={pingAlpha}>
-                <title>Approximate ping</title>
+                <title>Survivor · {agoLabel(ping.at, now)}</title>
                 <circle cx={point.x} cy={point.y} r="14" fill={mapColors.pingHalo} stroke={mapColors.pingEdge} />
                 <circle cx={point.x} cy={point.y} r="6" fill={mapColors.pingCore} stroke={mapColors.white} strokeWidth="1.5" />
+                <text x={point.x} y={point.y + 26} textAnchor="middle" fontSize="11" fontWeight="800" fill={mapColors.white}
+                  stroke="rgba(10,13,22,0.85)" strokeWidth="3" paintOrder="stroke">{agoLabel(ping.at, now)}</text>
               </g>;
             })}
             {room.allies?.map(ally => {

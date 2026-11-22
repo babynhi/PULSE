@@ -1,12 +1,13 @@
 // import { useState } from 'react'; // Standings
 import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import type { GameEvent, GameResult, Role, Team } from '../../../shared/protocol';
+import type { GameEvent, GameResult, Mvp, Role, Team } from '../../../shared/protocol';
 import { fieldStyles, MenuItem, MenuPaper, party, TrackStripe } from '../ui/Menu';
 // import { FieldDisclosure } from '../ui/Menu'; // Standings
 import { formatClock } from '../ui/formatDuration';
 import { InfectionTree } from './InfectionTree';
 import { buildInfectionTree } from './buildInfectionTree';
+import { ShareRecap } from './ShareCard';
 
 type RecapProps = {
   winner: Team;
@@ -17,6 +18,7 @@ type RecapProps = {
   standings: { name: string; startRole: Role; status: string }[];
   events: readonly GameEvent[];
   viewer?: string;
+  mvps?: Mvp[];
   onReplay: () => void;
 };
 
@@ -29,10 +31,10 @@ export function LiveRecap({ result, name, onReplay }: { result: GameResult; name
       startRole: player.startRole,
       status: [player.startRole !== player.finalRole ? player.startRole + ' → ' + player.finalRole : player.finalRole,
         player.status === 'eliminated' && 'Eliminated'].filter(Boolean).join(' · '),
-    }))} events={result.events ?? []} viewer={name} onReplay={onReplay} />;
+    }))} events={result.events ?? []} viewer={name} mvps={result.mvps} onReplay={onReplay} />;
 }
 
-export function RoundRecap({ winner, reason, role, durationSec, totals, standings, events, viewer, onReplay }: RecapProps) {
+export function RoundRecap({ winner, reason, role, durationSec, totals, standings, events, viewer, mvps, onReplay }: RecapProps) {
   // const [showStandings, setShowStandings] = useState(false);
   const { width, fontScale } = useWindowDimensions();
   const { roots, doctor } = buildInfectionTree(standings, events);
@@ -64,9 +66,19 @@ export function RoundRecap({ winner, reason, role, durationSec, totals, standing
           })}</View>
         </View>
       </View>
-      <InfectionTree roots={roots} viewer={viewer} />
       <View style={s.actions}>
         <MenuItem compact label="Play again" onPress={onReplay} />
+      </View>
+      {mvps && mvps.length > 0 && <View style={s.awards}>
+        <Text accessibilityRole="header" style={fieldStyles.heading}>Round awards</Text>
+        {mvps.map(m => <View key={m.title} style={s.award}>
+          <Text style={fieldStyles.muted}>{m.title}</Text>
+          <Text style={fieldStyles.label}>{m.name}{m.name === viewer ? ' (you)' : ''} · <Text style={fieldStyles.muted}>{m.detail}</Text></Text>
+        </View>)}
+      </View>}
+      <InfectionTree roots={roots} viewer={viewer} />
+      {mvps && <ShareRecap winner={winner} reason={reason} durationSec={durationSec} mvps={mvps} events={events} viewer={viewer} />}
+      <View style={s.actions}>
         {/* <FieldDisclosure label={`Standings (${standings.length})`} expanded={showStandings} onPress={() => setShowStandings(!showStandings)} /> */}
       </View>
       {/* {showStandings && <View style={s.standings}>{standings.map((player, i) =>
@@ -92,6 +104,8 @@ const s = StyleSheet.create({
   halfStat: { flexBasis: '44%' },
   role: { textTransform: 'capitalize' },
   actions: { ...fieldStyles.row, columnGap: 20 },
+  awards: { borderRadius: 10, borderWidth: 2, borderColor: party.ink, backgroundColor: party.panel, padding: 16, gap: 10 },
+  award: { gap: 1 },
   /*
   standings: { gap: 4 },
   standing: { ...fieldStyles.row, justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth,

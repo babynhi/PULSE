@@ -9,23 +9,36 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.babynhi.pulse"
+      "bundleIdentifier": "com.babynhi.pulse",
+      "appleTeamId": "2UF5ZMNJXD"
     },
     "plugins": [
       "./plugins/withGoogleMaps",
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "PULSE uses your location to show the safe zone during a round."
+          "locationWhenInUsePermission": "PULSE uses your location to show the safe zone during a round.",
+          "locationAlwaysAndWhenInUsePermission": "PULSE keeps tracking the safe zone and nearby players during a round, even with your phone locked in your pocket. It stops when the round ends.",
+          "isIosBackgroundLocationEnabled": true
         }
       ],
       "expo-router",
       [
         "react-native-ble-plx",
         {
-          "isBackgroundEnabled": false,
-          "bluetoothAlwaysPermission": "PULSE uses Bluetooth to detect players near you during a game."
+          "isBackgroundEnabled": true,
+          "bluetoothAlwaysPermission": "PULSE uses Bluetooth to detect players near you during a game.",
+          "modes": [
+            "peripheral",
+            "central"
+          ]
         }
+      ],
+      "expo-sharing",
+      "./plugins/withoutPushEntitlement",
+      [
+        "expo-notifications",
+        {}
       ]
     ]
   }

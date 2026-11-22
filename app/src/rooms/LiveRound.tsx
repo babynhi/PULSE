@@ -8,9 +8,9 @@ import { FieldChoice, fieldStyles as f, MenuItem, MenuPaper, party, PrintedHoldB
 import { fieldHeaderOptions, HeaderAction } from '../ui/HeaderAction';
 
 const roles = {
-  innocent: { name: 'Innocent', color: party.sky, goal: 'Avoid bites until the clock runs out.' },
-  doctor: { name: 'Doctor', color: party.lime, goal: 'Heal infected players. If they bite you, the infected win.' },
-  infected: { name: 'Infected', color: party.orange, goal: 'Bite survivors. Infect everyone or catch the doctor to win.' },
+  innocent: { name: 'Innocent', color: party.sky, goal: 'Avoid bites until the clock runs out. Your map shows nobody: feel the red pulse.' },
+  doctor: { name: 'Doctor', color: party.lime, goal: 'Cure someone within 60 seconds of their infection, after that it’s permanent. You can be bitten too: if you are, the infected win.' },
+  infected: { name: 'Infected', color: party.orange, goal: 'Bite survivors. Infect everyone or catch the doctor to win. Survivors show up on your map late and blurry.' },
 };
 
 const bands = { HOT: { rank: 3, text: 'Very close' }, WARM: { rank: 2, text: 'Nearby' }, COLD: { rank: 1, text: 'Farther away' } };
@@ -160,7 +160,7 @@ interface RoundProps extends Actions {
   feedback: string;
   bluetoothStatus?: string;
   zone?: ReactNode;
-  timing?: Pick<RoomView, 'zone' | 'pingAt' | 'serverNow' | 'pingEveryMs'>;
+  timing?: Pick<RoomView, 'zone' | 'pingAt' | 'serverNow' | 'pingEveryMs' | 'tally'>;
 }
 
 function NearbyRow({ name, band, ally, selected, onSelect }: {
@@ -211,7 +211,8 @@ export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, on
   const contacts = radar.filter((r): r is RadarEntry & { zone: Zone } => r.zone !== undefined)
     .sort((a, b) => bands[b.zone].rank - bands[a.zone].rank || a.bleId - b.bleId);
   const canAct = role === 'infected' || (role === 'doctor' && me.healsLeft > 0);
-  const targets = canAct ? contacts.filter(r => r.zone === 'HOT' && !r.ally) : [];
+  // Past the 60 s heal window an infection is permanent: no Hold to Heal for that target.
+  const targets = canAct ? contacts.filter(r => r.zone === 'HOT' && !r.ally && !(role === 'doctor' && r.noHeal)) : [];
   const target = targets.find(r => r.bleId === choice) ?? targets[0];
   const nameOf = (entry: RadarEntry) => entry.ally && entry.name ? entry.name :
     'Signal ' + (signalIds.includes(entry.bleId) ? signalIds.indexOf(entry.bleId) + 1 : entry.bleId);
@@ -221,7 +222,9 @@ export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, on
     <View style={s.scoreboard}>
       <ClockCell primary label="Round left" value={remaining} />
       {timing && <>
-        <ClockCell label={role === 'infected' ? 'Ally map' : 'Next ping'} value={role === 'infected' ? 'Live' : timeLeft(nextPing, now)} />
+        {role === 'infected'
+          ? <ClockCell label="Next ping" value={timing.pingAt ? timeLeft(nextPing, now) : '…'} />
+          : <ClockCell label="Survivors" value={timing.tally ? String(timing.tally.survivorsLeft) : '–'} />}
         <ClockCell label="Zone shrinks" value={shrinkTime} />
       </>}
     </View>
@@ -250,7 +253,7 @@ export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, on
             {targets.length > 1 && <Text style={f.body}>Choose a very close signal to target.</Text>}
             {contacts.length > 0 && <View style={s.contacts}>
               {contacts.map(r => <NearbyRow key={r.bleId} name={nameOf(r)} band={r.zone} ally={r.ally}
-                selected={target?.bleId === r.bleId} onSelect={canAct && r.zone === 'HOT' && !r.ally
+                selected={target?.bleId === r.bleId} onSelect={targets.includes(r)
                   ? () => { setChoice(r.bleId); setNearbyOpen(false); } : undefined} />)}
             </View>}
             {bluetoothStatus ? <Text style={f.muted}>{bluetoothStatus}</Text> : contacts.length === 0 &&
