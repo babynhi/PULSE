@@ -275,6 +275,8 @@ Players tap a button to reveal their role. Once revealed:
 * The role is hidden again.  
 * The role must not remain visible on the main game screen.
 
+During the round, players can tap **View role** to recheck their current role and objective. Tapping **Hide role** or leaving the app conceals the role again.
+
 The role is stored internally so the application can enforce the correct permissions and gameplay rules.
 
 ---

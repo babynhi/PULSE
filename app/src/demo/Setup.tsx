@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { router } from 'expo-router';
+import { setStringAsync } from 'expo-clipboard';
 import { useDemoSettings } from './settings';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -56,7 +57,7 @@ export default function Setup({ onStart }: { onStart: (name: string) => void }) 
         id: player.name, name: player.name, isHost: !host && index === 0, ready: true, connected: true,
       })),
     ];
-    return <Lobby roomCode={roomCode} youId="local" players={players} settings={settings}
+    return <Lobby roomCode={roomCode} youId="local" players={players} settings={settings} onCopy={() => setStringAsync(roomCode)}
       onSettings={() => router.push('/game-settings')}
       onReady={() => { setHeard(0); setStage('calibrate'); }} />;
   }

@@ -20,17 +20,24 @@ function ButtonPrint() {
   </View>;
 }
 
-export function PrintedHoldButton({ label, detail, progress, disabled, onPressIn, onPressOut }: {
-  label: string; detail: string; progress: number; disabled: boolean; onPressIn: () => void; onPressOut: () => void;
+export function PrintedHoldButton({ label, detail, badge, accent, progress, disabled, onPressIn, onPressOut }: {
+  label: string; detail: string; badge?: string; accent: string; progress: number; disabled: boolean; onPressIn: () => void; onPressOut: () => void;
 }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={label + ', ' + detail}
+  return <Pressable accessibilityRole="button" accessibilityLabel={[label, detail, badge].filter(Boolean).join(', ')}
+    accessibilityHint={disabled ? undefined : 'Hold until the button fills. Release early to cancel.'}
     accessibilityState={{ disabled }} disabled={disabled} onPressIn={onPressIn} onPressOut={onPressOut}
-    style={({ pressed }) => [styles.button, pressed && styles.pressed, disabled && styles.disabled]}>
+    style={({ pressed }) => [styles.button, styles.holdButton, pressed && styles.pressed, disabled && styles.disabled]}>
     <View aria-hidden pointerEvents="none" style={[StyleSheet.absoluteFill, styles.buttonPrint]}>
-      <View style={[styles.holdFill, { width: `${progress * 100}%` }]} />
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: accent, opacity: 0.28 }]} />
+      {progress > 0 && <View style={[styles.holdFill, { backgroundColor: accent, width: `${progress * 100}%` },
+        progress < 1 && styles.holdEdge]} />}
     </View>
     <ButtonPrint />
-    <Text style={styles.label}>{label}</Text><Text style={styles.arrow}>{detail}</Text>
+    <Text style={styles.holdLabel}>{label}</Text>
+    <View style={styles.holdMeta}>
+      <Text style={styles.holdDetail}>{detail}</Text>
+      {badge && <Text style={[styles.holdBadge, { backgroundColor: accent }]}>{badge}</Text>}
+    </View>
   </Pressable>;
 }
 
@@ -123,7 +130,13 @@ const styles = StyleSheet.create({
   paper: { width: '100%', height: '100%' },
   paperBleed: { left: -menuActionLayout.inset, right: -menuActionLayout.inset, bottom: -menuActionLayout.inset },
   buttonPrint: { overflow: 'hidden', borderRadius: 6 },
-  holdFill: { height: '100%', backgroundColor: party.sky },
+  holdButton: { backgroundColor: party.panel, flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 2 },
+  holdLabel: { color: party.ink, fontSize: 18, fontWeight: '800' },
+  holdDetail: { color: party.ink, fontSize: 14, fontWeight: '600' },
+  holdMeta: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 4 },
+  holdBadge: { color: party.ink, fontSize: 14, fontWeight: '800', borderRadius: 4, paddingHorizontal: 5 },
+  holdFill: { height: '100%' },
+  holdEdge: { borderRightWidth: 2, borderColor: party.ink },
   buttonGrain: { opacity: 0.6 },
   buttonDots: { position: 'absolute', right: 0, bottom: 0, height: '100%', width: 128, maxWidth: '40%', tintColor: party.ink },
   stripe: { height: 12, flexDirection: 'row', overflow: 'hidden', gap: 30, backgroundColor: party.orange },

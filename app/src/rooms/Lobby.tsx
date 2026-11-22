@@ -1,9 +1,11 @@
 import { Stack } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { PublicPlayer, Settings } from '../../../shared/protocol';
 import { FieldChoice, fieldStyles, MenuItem, MenuPaper, menuActionLayout, party, TrackStripe } from '../ui/Menu';
 import { formatDuration } from '../ui/formatDuration';
+import { HeaderAction } from '../ui/HeaderAction';
 
 type LobbyPlayer = Pick<PublicPlayer, 'id' | 'name' | 'isHost' | 'ready' | 'connected'> & Partial<Pick<PublicPlayer, 'isBot'>>;
 
@@ -14,7 +16,7 @@ interface LobbyProps {
   settings: Pick<Settings, 'durationSec' | 'disperseSec'>;
   onSettings: () => void;
   onReady: (ready: boolean) => void;
-  onShare?: () => void;
+  onCopy?: () => Promise<boolean>;
   onLeave?: () => void;
   onManage?: () => void;
   readyDisabled?: boolean;
@@ -22,9 +24,22 @@ interface LobbyProps {
   error?: string;
 }
 
-export function Lobby({ roomCode, youId, players, settings, onSettings, onReady, onShare, onLeave,
+export function Lobby({ roomCode, youId, players, settings, onSettings, onReady, onCopy, onLeave,
   onManage, readyDisabled, messages, error }: LobbyProps) {
   const { height } = useWindowDimensions();
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  useEffect(() => {
+    if (copyStatus === 'idle') return;
+    const timer = setTimeout(() => setCopyStatus('idle'), 3000);
+    return () => clearTimeout(timer);
+  }, [copyStatus]);
+  const copyCode = async () => {
+    try {
+      setCopyStatus(await onCopy?.() ? 'copied' : 'failed');
+    } catch {
+      setCopyStatus('failed');
+    }
+  };
   const compact = height < 640;
   const self = players.find(player => player.id === youId);
   const connected = players.filter(player => player.connected);
@@ -33,10 +48,8 @@ export function Lobby({ roomCode, youId, players, settings, onSettings, onReady,
   return (
     <View style={fieldStyles.page}>
       <Stack.Screen options={{ headerShown: true, title: 'PULSE lobby', ...(onLeave && {
-        headerBackVisible: false, gestureEnabled: false, headerRight: () =>
-          <Pressable accessibilityRole="button" accessibilityLabel="Leave room" style={s.textButton} onPress={onLeave}>
-            <Text style={fieldStyles.label}>Leave</Text>
-          </Pressable>,
+        headerBackVisible: false, gestureEnabled: false, headerLeft: () =>
+          <HeaderAction label="Leave" accessibilityLabel="Leave room" onPress={onLeave} />,
       }) }} />
       <TrackStripe />
       <SafeAreaView edges={['left', 'right']} style={fieldStyles.page}>
@@ -46,8 +59,12 @@ export function Lobby({ roomCode, youId, players, settings, onSettings, onReady,
               <Text style={fieldStyles.label}>Room code</Text>
               <Text selectable accessibilityLabel={`Room code ${roomCode.split('').join(' ')}`} style={s.code}>{roomCode}</Text>
             </View>
-            {onShare && <FieldChoice label="Share" accessibilityLabel="Share room code" onPress={onShare} />}
+            {onCopy && <FieldChoice label={copyStatus === 'copied' ? 'Copied!' : 'Copy'}
+              accessibilityLabel={copyStatus === 'copied' ? 'Room code copied' : 'Copy room code'} onPress={copyCode} />}
           </View>
+          {copyStatus === 'failed' && <Text accessibilityRole="alert" style={fieldStyles.error}>
+            Couldn’t copy. Select the room code to copy it manually.
+          </Text>}
 
           <View style={[s.round, compact && s.compactRound]}>
             <View style={s.timing}>

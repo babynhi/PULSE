@@ -1,19 +1,33 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { AppState, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Header } from 'expo-router/react-navigation';
 import type { ActionProgress, MyState, RadarEntry, Role, RoomView, Settings, Zone } from '../../../shared/protocol';
-import { fieldStyles as f, MenuItem, MenuPaper, party, PrintedHoldButton, TrackStripe } from '../ui/Menu';
+import { PING_INTERVAL_MS } from '../../../shared/protocol';
+import { FieldChoice, fieldStyles as f, MenuItem, MenuPaper, party, PrintedHoldButton, TrackStripe } from '../ui/Menu';
+import { fieldHeaderOptions, HeaderAction } from '../ui/HeaderAction';
 
 const roles = {
-  innocent: { name: 'Innocent', color: party.sky, goal: 'Avoid bites until the clock runs out.', prompt: 'Keep your distance.' },
-  doctor: { name: 'Doctor', color: party.lime, goal: 'Heal infected players. If they bite you, the infected win.', prompt: 'Get close to heal.' },
-  infected: { name: 'Infected', color: party.orange, goal: 'Bite survivors. Infect everyone or catch the doctor to win.', prompt: 'Get close to bite.' },
+  innocent: { name: 'Innocent', color: party.sky, goal: 'Avoid bites until the clock runs out.' },
+  doctor: { name: 'Doctor', color: party.lime, goal: 'Heal infected players. If they bite you, the infected win.' },
+  infected: { name: 'Infected', color: party.orange, goal: 'Bite survivors. Infect everyone or catch the doctor to win.' },
 };
 
 const bands = { HOT: { rank: 3, text: 'Very close' }, WARM: { rank: 2, text: 'Nearby' }, COLD: { rank: 1, text: 'Farther away' } };
 
 function clock(seconds: number) {
   return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+}
+
+function timeLeft(deadline: number, now: number) {
+  return clock(Math.max(0, Math.ceil((deadline - now) / 1000)));
+}
+
+function ClockCell({ label, value, primary = false }: { label: string; value: string; primary?: boolean }) {
+  return <View accessible accessibilityLabel={label + ', ' + value} style={[s.clockCell, primary && s.mainClock]}>
+    <Text style={s.clockLabel}>{label}</Text>
+    <Text style={[f.metric, s.clockValue]}>{value}</Text>
+  </View>;
 }
 
 function RoleCard({ role, name, charges, allies, onAck }: { role: Role; name: string; charges: number; allies: string[]; onAck: () => void }) {
@@ -37,16 +51,27 @@ function RoleCard({ role, name, charges, allies, onAck }: { role: Role; name: st
   </ScrollView>;
 }
 
-function RolePeek({ role, allies }: { role: Role; allies: string[] }) {
+function RolePeek({ role, allies, charges }: { role: Role; allies: string[]; charges: number }) {
   const [peeking, setPeeking] = useState(false);
   useEffect(() => {
     const sub = AppState.addEventListener('change', state => { if (state !== 'active') setPeeking(false); });
     return () => sub.remove();
   }, []);
-  return <Pressable accessibilityRole="button" accessibilityLabel="Hold to peek at your role"
-    onPressIn={() => setPeeking(true)} onPressOut={() => setPeeking(false)} style={s.peek}>
-    <Text style={f.label}>{peeking ? [roles[role].name, ...allies].join(' · ') : 'Hold to peek at role'}</Text>
-  </Pressable>;
+  const hideRole = () => setPeeking(false);
+  return <>
+    <FieldChoice label="View role" accessibilityLabel="View your secret role" onPress={() => setPeeking(true)} />
+    {peeking && <Modal transparent animationType="fade" onRequestClose={hideRole}>
+      <View style={s.roleBackdrop}>
+        <ScrollView style={s.roleDialog} contentContainerStyle={[f.panel, { backgroundColor: roles[role].color }]}>
+          <Text accessibilityRole="header" style={f.heading}>{roles[role].name}</Text>
+          <Text style={f.body}>{roles[role].goal}</Text>
+          {role === 'doctor' && <Text style={f.label}>{charges} healing {charges === 1 ? 'charge' : 'charges'}</Text>}
+          {allies.length > 0 && <Text style={f.label}>Fellow infected · {allies.join(', ')}</Text>}
+          <FieldChoice label="Hide role" onPress={hideRole} />
+        </ScrollView>
+      </View>
+    </Modal>}
+  </>;
 }
 
 type Actions = {
@@ -55,8 +80,8 @@ type Actions = {
   actionProgress: ActionProgress | null;
 };
 
-function HoldAction({ targetId, targetName, role, durationMs, clockOffset, onStartAction, onCancelAction, actionProgress }: Actions & {
-  targetId?: number; targetName?: string; role: 'doctor' | 'infected'; durationMs: number; clockOffset: number;
+function HoldAction({ targetId, targetName, role, healsLeft, durationMs, clockOffset, onStartAction, onCancelAction, actionProgress }: Actions & {
+  targetId?: number; targetName?: string; role: 'doctor' | 'infected'; healsLeft?: number; durationMs: number; clockOffset: number;
 }) {
   const [pressed, setPressed] = useState(false);
   const [pending, setPending] = useState(false);
@@ -104,16 +129,22 @@ function HoldAction({ targetId, targetName, role, durationMs, clockOffset, onSta
     });
   }
   function release() {
+    gesture.current++;
     if (holding.current) cancelRef.current();
     holding.current = false;
     setPressed(false);
   }
   const verb = role === 'doctor' ? 'heal' : 'bite';
   const active = pressed && (pending || !!progress);
-  const label = active ? (role === 'doctor' ? 'Healing' : 'Biting') + (targetName ? ' ' + targetName : '…') : 'Hold to ' + verb;
+  const label = (active ? 'Keep holding to ' : 'Press and hold to ') + verb;
+  const seconds = durationMs / 1000;
+  const duration = seconds + (seconds === 1 ? ' second' : ' seconds');
+  const detail = healsLeft === 0 ? 'No healing charges left' : targetName
+    ? targetName + ' · ' + (active ? 'Release to cancel' : duration) : 'Move closer to a player';
   return <>
     {failure !== '' && <Text accessibilityRole="alert" style={f.error}>{failure}</Text>}
-    <PrintedHoldButton label={label} detail={pressed && progress ? Math.round(fraction * 100) + '%' : durationMs / 1000 + 's'}
+    <PrintedHoldButton label={label} detail={detail} accent={roles[role].color}
+      badge={healsLeft == null ? undefined : healsLeft + (healsLeft === 1 ? ' heal left' : ' heals left')}
       progress={active ? fraction : 0} disabled={targetId === undefined} onPressIn={begin} onPressOut={release} />
   </>;
 }
@@ -129,7 +160,7 @@ interface RoundProps extends Actions {
   feedback: string;
   bluetoothStatus?: string;
   zone?: ReactNode;
-  urgentZone?: boolean;
+  timing?: Pick<RoomView, 'zone' | 'pingAt' | 'serverNow'>;
 }
 
 function NearbyRow({ name, band, ally, selected, onSelect }: {
@@ -145,31 +176,37 @@ function NearbyRow({ name, band, ally, selected, onSelect }: {
     {onSelect && <View aria-hidden style={[s.radio, selected && s.checked]}>{selected && <View style={s.dot} />}</View>}
   </>;
   return onSelect
-    ? <Pressable accessibilityRole="radio" accessibilityLabel={label} accessibilityState={{ checked: selected }}
+    ? <Pressable accessibilityRole="radio" accessibilityLabel={label} aria-checked={selected} accessibilityState={{ checked: selected }}
         onPress={onSelect} style={[s.contactRow, selected && s.selected]}>{content}</Pressable>
     : <View accessible accessibilityLabel={label} style={s.contactRow}>{content}</View>;
 }
 
 export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, onRoleAck, actionProgress, onStartAction,
-  onCancelAction, feedback, bluetoothStatus, zone, urgentZone }: RoundProps) {
+  onCancelAction, feedback, bluetoothStatus, zone, timing }: RoundProps) {
   const insets = useSafeAreaInsets();
-  const [now, setNow] = useState(() => Date.now() + clockOffset);
+  const [localNow, setLocalNow] = useState(Date.now);
+  const now = Math.max(localNow + clockOffset, timing?.serverNow ?? 0);
   const [choice, setChoice] = useState<number | null>(null);
+  const [nearbyOpen, setNearbyOpen] = useState(false);
   const [signalIds] = useState(() => radar.map(entry => entry.bleId).sort((a, b) => a - b));
   useEffect(() => {
-    const tick = () => setNow(Date.now() + clockOffset);
-    const timer = setInterval(tick, 250);
+    const timer = setInterval(() => setLocalNow(Date.now()), 250);
     return () => clearInterval(timer);
-  }, [clockOffset]);
-  const left = Math.max(0, Math.ceil((endsAt - now) / 1000));
+  }, []);
+  const remaining = timeLeft(endsAt, now);
   const role = me.role;
   if (me.status === 'eliminated') return <View style={[f.page, f.content]}>
     <Text style={f.title}>You’re out</Text><Text style={f.body}>The round is still going. Stay here for the results.</Text>
-    <Text style={f.metric}>{clock(left)}</Text>
+    <Text style={f.metric}>{remaining}</Text>
   </View>;
   if (!role) return <View style={[f.page, f.content]}><Text style={f.body}>Waiting for your role…</Text></View>;
   const allies = role === 'infected' ? radar.flatMap(entry => entry.ally && entry.name ? [entry.name] : []) : [];
   if (!me.roleAcked) return <RoleCard key={role} role={role} name={name} charges={me.healsLeft} allies={allies} onAck={onRoleAck} />;
+  const roundStartedAt = endsAt - settings.durationSec * 1000;
+  const nextPing = (timing?.pingAt ?? roundStartedAt) + PING_INTERVAL_MS;
+  const safeZone = timing?.zone;
+  const shrinkTime = !settings.zoneEnabled ? 'Off' : !safeZone ? 'GPS…'
+    : safeZone.shrinksAt == null ? 'Final' : timeLeft(safeZone.shrinksAt, now);
 
   const contacts = radar.filter((r): r is RadarEntry & { zone: Zone } => r.zone !== undefined)
     .sort((a, b) => bands[b.zone].rank - bands[a.zone].rank || a.bleId - b.bleId);
@@ -179,73 +216,76 @@ export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, on
   const nameOf = (entry: RadarEntry) => entry.ally && entry.name ? entry.name :
     'Signal ' + (signalIds.includes(entry.bleId) ? signalIds.indexOf(entry.bleId) + 1 : entry.bleId);
   const immunity = Math.max(0, Math.ceil((me.immuneUntil - now) / 1000));
-  const headline = targets.length > 1 ? 'Choose a target.' : target ? 'A player is in reach.' :
-    role === 'doctor' && !canAct ? 'Stay out of reach.' : roles[role].prompt;
-  const instruction = role === 'innocent' ? 'The stronger the signal, the closer the player.' :
-    !canAct ? 'Your heals are used up. Avoid bites until time runs out.' :
-    targets.length > 1 ? 'Tap a very close signal, then hold the button until it fills.' :
-    target ? 'Hold the button until it fills. Release early to cancel.' : 'Look for a very close signal to get within reach.';
 
   return <View style={f.page}>
-    <ScrollView style={f.page} contentContainerStyle={f.content}>
-      {urgentZone && zone}
-      <View style={s.scoreboard}>
-        <View style={s.metric}><Text style={f.kicker}>TIME LEFT</Text><Text style={f.metric}>{clock(left)}</Text></View>
-        {role === 'doctor' && <View style={[s.metric, s.charges]}>
-          <Text style={f.kicker}>HEALS LEFT</Text><Text accessibilityLabel={me.healsLeft + ' healing charges left'} style={f.metric}>{me.healsLeft}</Text>
-        </View>}
-      </View>
-      <View style={s.copy}><Text accessibilityRole="header" style={f.title}>{headline}</Text>
-        <Text style={f.body}>{instruction}</Text></View>
-      {immunity > 0 && <Text style={f.label}>Protected from bites for {immunity}s</Text>}
-      <View style={s.contacts}>
-        <View style={s.radarHead}><Text accessibilityRole="header" style={f.heading}>Nearby players</Text><Text style={f.label}>{contacts.length}</Text></View>
-        {contacts.map(r => <NearbyRow key={r.bleId} name={nameOf(r)} band={r.zone} ally={r.ally}
-          selected={target?.bleId === r.bleId} onSelect={canAct && r.zone === 'HOT' && !r.ally ? () => setChoice(r.bleId) : undefined} />)}
-        {contacts.length === 0 && <Text style={[f.muted, s.empty]}>{bluetoothStatus || 'No signals yet. Move closer to another player with PULSE open.'}</Text>}
-      </View>
-      {contacts.length > 0 && !!bluetoothStatus && <Text style={f.muted}>{bluetoothStatus}</Text>}
-      {!urgentZone && zone}
-      <RolePeek role={role} allies={allies} />
-      {!canAct && !!feedback && <Text accessibilityLiveRegion="polite" style={f.body}>{feedback}</Text>}
-    </ScrollView>
-    {canAct && <View style={[s.dock, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+    <View style={s.scoreboard}>
+      <ClockCell primary label="Round left" value={remaining} />
+      {timing && <>
+        <ClockCell label={role === 'infected' ? 'Ally map' : 'Next ping'} value={role === 'infected' ? 'Live' : timeLeft(nextPing, now)} />
+        <ClockCell label="Zone shrinks" value={shrinkTime} />
+      </>}
+    </View>
+    {zone}
+    <View style={[s.dock, { paddingBottom: insets.bottom }]}>
       <View style={s.dockInterior}>
+        <View style={s.toolbar}>
+          <FieldChoice label={'Nearby players (' + contacts.length + ')'} onPress={() => setNearbyOpen(true)} />
+          <RolePeek role={role} allies={allies} charges={me.healsLeft} />
+        </View>
+        {immunity > 0 && <Text style={f.label}>Protected from bites for {immunity}s</Text>}
         {!!feedback && <Text accessibilityLiveRegion="polite" style={f.body}>{feedback}</Text>}
-        {target && <Text style={f.label}>Target · {nameOf(target)}</Text>}
-        <HoldAction key={role + '-' + (target?.bleId ?? 'none')} targetId={target?.bleId} targetName={target && nameOf(target)}
-          role={role} durationMs={role === 'doctor' ? settings.healHoldMs : settings.biteHoldMs} clockOffset={clockOffset}
-          onStartAction={onStartAction} onCancelAction={onCancelAction} actionProgress={actionProgress} />
+        {role !== 'innocent' && <HoldAction key={role + '-' + (target?.bleId ?? 'none')} targetId={target?.bleId} targetName={target && nameOf(target)}
+          healsLeft={role === 'doctor' ? me.healsLeft : undefined} role={role} durationMs={role === 'doctor' ? settings.healHoldMs : settings.biteHoldMs} clockOffset={clockOffset}
+          onStartAction={onStartAction} onCancelAction={onCancelAction} actionProgress={actionProgress} />}
       </View>
-    </View>}
+    </View>
+    {nearbyOpen && <Modal animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setNearbyOpen(false)}>
+      <SafeAreaProvider>
+        <SafeAreaView edges={['top']} style={fieldHeaderOptions.headerStyle}>
+          <Header {...fieldHeaderOptions} modal headerStatusBarHeight={0} title="Nearby players"
+            headerLeft={() => <HeaderAction label="Close" accessibilityLabel="Close nearby players" onPress={() => setNearbyOpen(false)} />} />
+        </SafeAreaView>
+        <SafeAreaView edges={['bottom', 'left', 'right']} style={f.page}>
+          <ScrollView contentContainerStyle={f.content}>
+            {targets.length > 1 && <Text style={f.body}>Choose a very close signal to target.</Text>}
+            {contacts.length > 0 && <View style={s.contacts}>
+              {contacts.map(r => <NearbyRow key={r.bleId} name={nameOf(r)} band={r.zone} ally={r.ally}
+                selected={target?.bleId === r.bleId} onSelect={canAct && r.zone === 'HOT' && !r.ally
+                  ? () => { setChoice(r.bleId); setNearbyOpen(false); } : undefined} />)}
+            </View>}
+            {bluetoothStatus ? <Text style={f.muted}>{bluetoothStatus}</Text> : contacts.length === 0 &&
+              <Text style={f.body}>No signals yet. Move closer to another player with PULSE open.</Text>}
+          </ScrollView>
+        </SafeAreaView>
+      </SafeAreaProvider>
+    </Modal>}
   </View>;
 }
 
 export function LiveRound({ room, ...actions }: Actions & {
-  room: RoomView; radar: RadarEntry[]; onRoleAck: () => void; feedback: string; bluetoothStatus?: string; zone?: ReactNode;
+  room: RoomView; clockOffset: number; radar: RadarEntry[]; onRoleAck: () => void; feedback: string; bluetoothStatus?: string; zone?: ReactNode;
 }) {
-  const [clockOffset] = useState(() => room.serverNow - Date.now());
   if (!room.me || room.endsAt === null) return null;
   return <RoundScreen key={room.me.bleId} me={room.me} name={room.players.find(p => p.id === room.youId)?.name ?? ''}
-    urgentZone={room.me.graceEndsAt != null || room.zone?.warning} settings={room.settings} endsAt={room.endsAt}
-    clockOffset={clockOffset} {...actions} />;
+    timing={room} settings={room.settings} endsAt={room.endsAt} {...actions} />;
 }
 
 const s = StyleSheet.create({
-  scoreboard: { flexDirection: 'row', flexWrap: 'wrap', borderWidth: 1, borderColor: party.ink, borderRadius: 8, overflow: 'hidden', backgroundColor: party.sky },
-  peek: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: 4 },
-  metric: { flex: 1, minWidth: 110, paddingVertical: 10, paddingHorizontal: 14 },
-  charges: { backgroundColor: party.lime },
-  copy: { gap: 4 },
+  scoreboard: { flexDirection: 'row', flexWrap: 'wrap', gap: 1, backgroundColor: party.ink, borderBottomWidth: 1, borderColor: party.ink },
+  clockCell: { flexGrow: 1, flexBasis: 80, backgroundColor: party.panel, paddingHorizontal: 10, paddingVertical: 4 },
+  mainClock: { backgroundColor: party.sky },
+  clockLabel: { color: party.ink, fontSize: 13, fontWeight: '700' },
+  clockValue: { fontSize: 26 },
+  roleBackdrop: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: 'rgba(0,0,0,0.55)' },
+  roleDialog: { flexGrow: 0, width: '100%', maxWidth: 360, maxHeight: '90%' },
   contacts: { backgroundColor: party.panel, borderWidth: 1, borderColor: party.ink, borderRadius: 8, overflow: 'hidden' },
-  radarHead: { paddingHorizontal: 14, paddingVertical: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   contactRow: { minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderColor: party.line, paddingVertical: 8, paddingHorizontal: 12, flexWrap: 'wrap' },
   contact: { flex: 1, minWidth: 65 },
   selected: { backgroundColor: party.sky },
   signal: { flexDirection: 'row', alignItems: 'flex-end', gap: 2 }, bar: { width: 3, borderRadius: 1 },
   radio: { width: 18, height: 18, borderWidth: 2, borderRadius: 9, borderColor: party.ink, alignItems: 'center', justifyContent: 'center' },
   checked: { backgroundColor: party.panel }, dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: party.ink },
-  empty: { paddingHorizontal: 14, paddingBottom: 14 },
-  dock: { borderTopWidth: 1, borderColor: party.ink, backgroundColor: party.paper, paddingTop: 10, paddingHorizontal: 16 },
+  dock: { borderTopWidth: 1, borderColor: party.ink, backgroundColor: party.paper, paddingTop: 5, paddingHorizontal: 12 },
   dockInterior: { width: '100%', maxWidth: 600, alignSelf: 'center', gap: 5 },
+  toolbar: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 4 },
 });
