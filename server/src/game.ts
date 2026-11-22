@@ -102,6 +102,12 @@ interface DemoBot {
     hotSince: number;
 }
 
+/** Story mode timings (ms from round start, or after the previous story beat). */
+export const STORY_BITE_MS = 15_000;
+export const STORY_CURE_HOST_AFTER_MS = 20_000;
+export const STORY_CURE_ZOMBIE_AFTER_MS = 10_000;
+export const STORY_DOCTOR_APPROACH_MS = 10_000;
+
 /** A bite/heal hold may survive a brief signal dropout of this length. */
 export const PROX_GRACE_MS = 700;
 /** A proximity reading older than this doesn't count. */
@@ -192,6 +198,12 @@ export class Room {
     /** sampled but not yet released (held back by the ping delay) */
     private pingQueue: { at: number; dots: Map<string, LatLng> }[] = [];
     private lastPingSample: number | null = null;
+    /** host's "Test my role" choice for the next round (demo rooms only), null = random */
+    testRole: Role | null = null;
+    /** Story mode (demo rooms only): demo players follow a fixed, timed storyline. */
+    story = false;
+    /** per-round story state */
+    private storyState: { bitAt: number | null; curedHostAt: number | null; from: Map<string, LatLng> } | null = null;
     /** recent anonymous infection spots */
     marks: InfectionMark[] = [];
     private markSeq = 0;
@@ -441,6 +453,8 @@ export class Room {
                 infectedAt: 0,
             });
         });
+        this.applyTestRole();
+        this.storyState = null;
         this.resetZone();
         this.events = [];
         this.feed = [];
@@ -454,6 +468,26 @@ export class Room {
         this.countdownEndsAt = now + this.settings.disperseSec * 1000;
         this.dirty = true;
         if (this.settings.disperseSec === 0) this.tick(now);
+    }
+
+    /** "Test my role": give the host the role they asked for by swapping with whoever drew it. */
+    private applyTestRole() {
+        const host = this.players.get(this.hostId);
+        const want = this.testRole;
+        if (!host || !want || !this.hasTestTools() || host.role === want) return;
+        const holder = [...this.players.values()].find((p) => p.id !== host.id && p.role === want);
+        const give = (p: Player, role: Role) => Object.assign(p, {
+            role, startRole: role, healsLeft: role === 'doctor' ? this.settings.healCharges : 0,
+        });
+        const old = host.role!;
+        if (holder) give(holder, old);
+        else {
+            // Nobody drew it (e.g. innocent with no innocents left): keep at least one infected.
+            const other = [...this.players.values()].find((p) => p.id !== host.id && p.role === 'innocent')
+                ?? [...this.players.values()].find((p) => p.id !== host.id && p.role !== 'infected');
+            if (old === 'infected' && other) give(other, 'infected');
+        }
+        give(host, want);
     }
 
     roleAck(playerId: string) {
@@ -533,6 +567,8 @@ export class Room {
 
         this.stepBots(now);
         this.stepDemoBots(now);
+        this.stepStory(now);
+        if (this.phase !== 'playing') return;
         this.stepHolds(now);
         if (this.phase !== 'playing') return;
         this.stepZone(now);
@@ -876,14 +912,49 @@ export class Room {
         this.tick(now);
     }
 
+    /** Test tools (Test my role, switch role) are for demo rooms, so real games stay fair. */
+    hasTestTools() {
+        return this.hasDemo();
+    }
+
+    setStory(byId: string, on: boolean) {
+        this.requireHost(byId);
+        if (this.phase !== 'lobby') throw new GameError('Turn Story mode on in the lobby');
+        if (on && !this.hasTestTools()) throw new GameError('Story mode is only for rooms with demo players');
+        this.story = !!on;
+        this.dirty = true;
+    }
+
+    setTestRole(byId: string, role: Role | null) {
+        this.requireHost(byId);
+        if (this.phase !== 'lobby') throw new GameError('Pick your test role in the lobby');
+        if (!this.hasTestTools()) throw new GameError('Test roles are only for rooms with demo players');
+        if (role !== null && !['infected', 'innocent', 'doctor'].includes(role)) throw new GameError('Unknown role');
+        if (role === 'doctor' && !this.settings.doctorEnabled) throw new GameError('Turn the doctor on first');
+        this.testRole = role;
+        this.dirty = true;
+    }
+
     debugSetRole(playerId: string, role: Role, now = Date.now()) {
-        this.requireDebug();
+        if (!this.hasTestTools()) this.requireDebug();
         const p = this.players.get(playerId);
         if (!p || this.phase !== 'playing') return;
-        p.role = role;
-        p.infectedAt = role === 'infected' ? now : 0;
-        if (role === 'doctor' && p.healsLeft === 0) p.healsLeft = this.settings.healCharges;
+        if (!['infected', 'innocent', 'doctor'].includes(role) || p.role === role || p.status !== 'active') return;
+        // Trade roles with a demo/bot player who has the one you want, so the round keeps its
+        // infected and doctor (switching the last infected to innocent would otherwise end it).
+        const old = p.role;
+        const partner = this.active().find((o) => o !== p && o.isBot && o.role === role);
+        const setRole = (who: Player, r: Role) => {
+            who.role = r;
+            who.infectedAt = r === 'infected' ? now : 0;
+            if (r === 'doctor' && who.healsLeft === 0) who.healsLeft = this.settings.healCharges;
+            this.cancelHoldsInvolving(who.id, 'Role changed');
+        };
+        if (partner && old) setRole(partner, old);
+        setRole(p, role);
+        p.roleAcked = true; // a test switch skips the "your secret role" card
         this.dirty = true;
+        this.checkVictory(now);
     }
 
     /** Bots move around randomly and bite/heal whoever is HOT, so one phone can play a round. */
@@ -930,13 +1001,98 @@ export class Room {
         if (this.lastDemoStep && now - this.lastDemoStep < DEMO_STEP_MS) return;
         const dt = this.lastDemoStep ? Math.min(2, (now - this.lastDemoStep) / 1000) : 1;
         this.lastDemoStep = now;
+        const scripted = this.storyOn() ? new Set([this.storyActors().zombie, this.storyActors().doctor]) : new Set();
         for (const b of bots) {
             const s = this.demoBots.get(b.id);
-            if (s) this.walkDemoBot(b, s, dt, now);
-            else this.spawnDemoBot(b, now);
+            if (!s) this.spawnDemoBot(b, now);
+            else if (scripted.has(b)) this.positions.set(b.id, { ...s.pos, at: now }); // the story moves them
+            else this.walkDemoBot(b, s, dt, now);
         }
-        if (this.phase === 'playing') for (const b of bots) this.demoAct(b, now);
+        // Story mode: the script decides who bites and heals, nobody acts on their own.
+        if (this.phase === 'playing' && !this.storyOn()) for (const b of bots) this.demoAct(b, now);
         this.dirty = true;
+    }
+
+    // ---------- story mode (scripted demo) ----------
+
+    private storyOn() {
+        return this.story && this.hasTestTools() && this.phase === 'playing';
+    }
+
+    /** Demo players the story moves itself (they don't wander). */
+    private storyActors(): { zombie?: Player; doctor?: Player; host?: Player } {
+        const host = this.players.get(this.hostId);
+        const bots = this.active().filter((p) => p.demo);
+        const zombie = bots.find((p) => p.startRole === 'infected');
+        const doctor = bots.find((p) => p.startRole === 'doctor');
+        return { zombie, doctor, host };
+    }
+
+    /**
+     * The storyline, timed from round start (see STORY_* below). Moves are simulated GPS; bites and
+     * cures go through applyBite/applyHeal, so banners, markers, notices and victory are the real ones.
+     */
+    private stepStory(now: number) {
+        if (!this.storyOn() || this.startedAt === null) return;
+        const { zombie, doctor, host } = this.storyActors();
+        const at = host && this.fix(host.id, now);
+        if (!host || !at || host.status !== 'active') return;
+        const st = (this.storyState ??= { bitAt: null, curedHostAt: null, from: new Map() });
+        const t = now - this.startedAt;
+        /** Walk `who` from where it was at `t0` to `meters` from the host, arriving at `t1`. */
+        const approach = (who: Player | undefined, t0: number, t1: number, meters: number) => {
+            if (!who || who.status !== 'active' || t < t0) return;
+            const key = `${who.id}@${t0}`;
+            if (!st.from.has(key)) st.from.set(key, { ...(this.positions.get(who.id) ?? offsetMeters(at, 40, 200)) });
+            const from = st.from.get(key)!;
+            const end = offsetMeters(at, meters, bearingDeg(at, from));
+            const k = Math.min(1, (t - t0) / Math.max(1, t1 - t0));
+            const pos = { lat: from.lat + (end.lat - from.lat) * k, lng: from.lng + (end.lng - from.lng) * k };
+            this.positions.set(who.id, { ...pos, at: now });
+            const s = this.demoBots.get(who.id);
+            if (s) s.pos = pos;
+        };
+        const hostRole = host.startRole;
+        if (hostRole === 'doctor') {
+            // An infected walks up from 10 s, then stays ~2 m away (HOT) without biting until cured.
+            // Its 60 s heal window starts when it sets off, so the doctor has until ~70 s to cure it.
+            if (zombie?.role === 'infected') {
+                if (t >= STORY_DOCTOR_APPROACH_MS && !st.from.has('doctor-window')) {
+                    st.from.set('doctor-window', at);
+                    zombie.infectedAt = now;
+                }
+                approach(zombie, STORY_DOCTOR_APPROACH_MS, STORY_DOCTOR_APPROACH_MS + 8000, 2);
+            }
+            return;
+        }
+        if (hostRole !== 'innocent' || !zombie) return;
+        // 1. The zombie walks up and bites the host at 15 s.
+        if (st.bitAt === null) {
+            approach(zombie, 0, STORY_BITE_MS - 1000, 1);
+            if (t >= STORY_BITE_MS && host.role !== 'infected' && zombie.role === 'infected') {
+                this.applyBite(zombie, host, now);
+                st.bitAt = now;
+                zombie.bites = Math.max(1, zombie.bites);
+            }
+            return;
+        }
+        if (!doctor || doctor.status !== 'active') return;
+        const sinceBite = now - st.bitAt;
+        // 2. The doctor walks over and cures the host 20 s after the bite.
+        if (st.curedHostAt === null) {
+            approach(doctor, st.bitAt - this.startedAt + 5000, st.bitAt - this.startedAt + STORY_CURE_HOST_AFTER_MS - 1000, 1.5);
+            if (sinceBite >= STORY_CURE_HOST_AFTER_MS && host.role === 'infected') {
+                this.applyHeal(doctor, host, now);
+                st.curedHostAt = now;
+            }
+            return;
+        }
+        // 3. 10 s later the doctor cures the last zombie: no infected left, survivors win.
+        approach(doctor, st.curedHostAt - this.startedAt + 1000, st.curedHostAt - this.startedAt + STORY_CURE_ZOMBIE_AFTER_MS - 1000, 1.5);
+        approach(zombie, st.curedHostAt - this.startedAt + 1000, st.curedHostAt - this.startedAt + STORY_CURE_ZOMBIE_AFTER_MS - 1000, 6);
+        if (now - st.curedHostAt >= STORY_CURE_ZOMBIE_AFTER_MS && zombie.role === 'infected' && doctor.healsLeft > 0) {
+            this.applyHeal(doctor, zombie, now);
+        }
     }
 
     private spawnDemoBot(b: Player, now: number) {
@@ -1396,6 +1552,9 @@ export class Room {
             infectionMarks: this.marksFor(now),
             tally: this.phase === 'playing' ? this.tally() : null,
             pingEveryMs: this.pingEveryMs(),
+            testTools: this.hasTestTools(),
+            ...(playerId === this.hostId && this.hasTestTools() ? { story: this.story } : {}),
+            ...(playerId === this.hostId && this.hasTestTools() ? { testRole: this.testRole } : {}),
             feed: inGame ? this.feed.slice(-5) : [],
         };
     }

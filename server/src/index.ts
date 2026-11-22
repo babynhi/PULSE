@@ -140,6 +140,8 @@ io.on('connection', (socket: Socket<ClientToServer, ServerToClient>) => {
             sockets.delete(playerId);
         }),
     );
+    socket.on('lobby:story', inRoom((r, { on }) => r.setStory(ctx.playerId, !!on), (a) => a[1]));
+    socket.on('lobby:testRole', inRoom((r, { role }) => r.setTestRole(ctx.playerId, role ?? null), (a) => a[1]));
     socket.on('lobby:transferHost', inRoom((r, { playerId }) => r.transferHost(ctx.playerId, playerId)));
     socket.on(
         'lobby:addDemo',

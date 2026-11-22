@@ -74,6 +74,26 @@ function RolePeek({ role, allies, charges }: { role: Role; allies: string[]; cha
   </>;
 }
 
+/** Demo rooms only: pick your own role to try every side of the game. */
+function TestRole({ role, onPick }: { role: Role; onPick: (role: Role) => void }) {
+  const [open, setOpen] = useState(false);
+  return <>
+    <FieldChoice label="Test role" accessibilityLabel="Switch your role for testing" onPress={() => setOpen(true)} />
+    {open && <Modal transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+      <View style={s.roleBackdrop}>
+        <View style={[s.roleDialog, f.panel]} accessibilityViewIsModal>
+          <Text accessibilityRole="header" style={f.heading}>Test as…</Text>
+          <Text style={f.muted}>Only in rooms with demo players. Switches your role right now; nobody else is told.</Text>
+          {(['infected', 'innocent', 'doctor'] as Role[]).map(r =>
+            <MenuItem key={r} compact secondary={r !== role} label={roles[r].name + (r === role ? ' (now)' : '')}
+              onPress={() => { onPick(r); setOpen(false); }} />)}
+          <FieldChoice label="Cancel" onPress={() => setOpen(false)} />
+        </View>
+      </View>
+    </Modal>}
+  </>;
+}
+
 type Actions = {
   onStartAction: (id: number) => Promise<void>;
   onCancelAction: () => void;
@@ -157,6 +177,8 @@ interface RoundProps extends Actions {
   endsAt: number;
   clockOffset: number;
   onRoleAck: () => void;
+  /** Demo rooms only: switch your own role mid-round. */
+  onTestRole?: (role: Role) => void;
   feedback: string;
   bluetoothStatus?: string;
   zone?: ReactNode;
@@ -181,7 +203,7 @@ function NearbyRow({ name, band, ally, selected, onSelect }: {
     : <View accessible accessibilityLabel={label} style={s.contactRow}>{content}</View>;
 }
 
-export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, onRoleAck, actionProgress, onStartAction,
+export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, onRoleAck, onTestRole, actionProgress, onStartAction,
   onCancelAction, feedback, bluetoothStatus, zone, timing }: RoundProps) {
   const insets = useSafeAreaInsets();
   const [localNow, setLocalNow] = useState(Date.now);
@@ -234,6 +256,7 @@ export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, on
         <View style={s.toolbar}>
           <FieldChoice label={'Nearby players (' + contacts.length + ')'} onPress={() => setNearbyOpen(true)} />
           <RolePeek role={role} allies={allies} charges={me.healsLeft} />
+          {onTestRole && <TestRole role={role} onPick={onTestRole} />}
         </View>
         {immunity > 0 && <Text style={f.label}>Protected from bites for {immunity}s</Text>}
         {!!feedback && <Text accessibilityLiveRegion="polite" style={f.body}>{feedback}</Text>}
@@ -266,7 +289,8 @@ export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, on
 }
 
 export function LiveRound({ room, ...actions }: Actions & {
-  room: RoomView; clockOffset: number; radar: RadarEntry[]; onRoleAck: () => void; feedback: string; bluetoothStatus?: string; zone?: ReactNode;
+  room: RoomView; clockOffset: number; radar: RadarEntry[]; onRoleAck: () => void; onTestRole?: (role: Role) => void;
+  feedback: string; bluetoothStatus?: string; zone?: ReactNode;
 }) {
   if (!room.me || room.endsAt === null) return null;
   return <RoundScreen key={room.me.bleId} me={room.me} name={room.players.find(p => p.id === room.youId)?.name ?? ''}
