@@ -160,7 +160,7 @@ interface RoundProps extends Actions {
   feedback: string;
   bluetoothStatus?: string;
   zone?: ReactNode;
-  timing?: Pick<RoomView, 'zone' | 'pingAt' | 'serverNow'>;
+  timing?: Pick<RoomView, 'zone' | 'pingAt' | 'serverNow' | 'pingEveryMs'>;
 }
 
 function NearbyRow({ name, band, ally, selected, onSelect }: {
@@ -203,7 +203,7 @@ export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, on
   const allies = role === 'infected' ? radar.flatMap(entry => entry.ally && entry.name ? [entry.name] : []) : [];
   if (!me.roleAcked) return <RoleCard key={role} role={role} name={name} charges={me.healsLeft} allies={allies} onAck={onRoleAck} />;
   const roundStartedAt = endsAt - settings.durationSec * 1000;
-  const nextPing = (timing?.pingAt ?? roundStartedAt) + PING_INTERVAL_MS;
+  const nextPing = (timing?.pingAt ?? roundStartedAt) + (timing?.pingEveryMs ?? PING_INTERVAL_MS);
   const safeZone = timing?.zone;
   const shrinkTime = !settings.zoneEnabled ? 'Off' : !safeZone ? 'GPS…'
     : safeZone.shrinksAt == null ? 'Final' : timeLeft(safeZone.shrinksAt, now);

@@ -30,6 +30,7 @@ import {
     ZONE_MIN_RADIUS_M,
     ZONE_WARNING_MS,
     PING_INTERVAL_MS,
+    DEMO_PING_INTERVAL_MS,
 } from '../../shared/protocol';
 
 /** A GPS fix older than this is treated as unknown (never counts as "outside"). */
@@ -49,6 +50,46 @@ interface ZoneState {
 
 export class GameError extends Error { }
 
+// ---------- demo players (simulated people on fake GPS) ----------
+
+export const DEMO_NAMES = ['Maya', 'Jordan', 'Sam'];
+/** Demo players move once a second, like a phone's GPS updates. */
+export const DEMO_STEP_MS = 1000;
+/** Normal walking pace range (m/s). */
+export const DEMO_WALK_MPS: [number, number] = [1.2, 1.6];
+/** Hard cap: a demo player never moves faster than this. */
+export const DEMO_MAX_MPS = 1.6;
+/** Chasing/approaching is a bit slower than walking pace, so a real player can get away. */
+export const DEMO_CHASE_MPS = 1.0;
+/** GPS distance -> proximity bucket for demo players (beyond COLD = out of Bluetooth range). */
+export const DEMO_HOT_M = 5;
+export const DEMO_WARM_M = 15;
+export const DEMO_COLD_M = 50;
+/** A real player's GPS fix must be this fresh to count for demo proximity. */
+export const DEMO_FIX_FRESH_MS = 10_000;
+/** How long a demo bot must stay HOT on a target before it starts a bite / heal. */
+export const DEMO_BITE_AFTER_MS = 2000;
+export const DEMO_HEAL_AFTER_MS = 1500;
+/** Spawn ring around the host. */
+export const DEMO_SPAWN_M: [number, number] = [20, 60];
+/** Keep this far inside the zone edge (and within this radius of spawn before the zone exists). */
+const DEMO_EDGE_MARGIN_M = 8;
+const DEMO_LEASH_M = 70;
+const DEMO_TURN_DEG_PER_S = 70;
+
+interface DemoBot {
+    pos: LatLng;
+    /** where it spawned; used as the play area before the zone is placed */
+    anchor: LatLng;
+    heading: number;
+    /** wander turn rate, deg/s, drifts smoothly */
+    turn: number;
+    pace: number;
+    pauseUntil: number;
+    hotTargetId: string | null;
+    hotSince: number;
+}
+
 /** A bite/heal hold may survive a brief signal dropout of this length. */
 export const PROX_GRACE_MS = 700;
 /** A proximity reading older than this doesn't count. */
@@ -63,6 +104,8 @@ export interface Player {
     disconnectedAt: number | null;
     ready: boolean;
     // game
+    /** simulated demo player (also isBot) */
+    demo?: boolean;
     bleId: number;
     role: Role | null;
     startRole: Role | null;
@@ -112,6 +155,9 @@ export class Room {
     debugProx = new Map<string, Zone>();
     botRoam = false;
     private lastBotStep = 0;
+    /** simulated demo players' walking state, by player id */
+    demoBots = new Map<string, DemoBot>();
+    private lastDemoStep = 0;
     /** latest GPS fix per player */
     positions = new Map<string, LatLng & { at: number }>();
     zone: ZoneState | null = null;
@@ -407,6 +453,7 @@ export class Room {
                 }
             }
         }
+        if (this.phase === 'countdown') this.stepDemoBots(now);
         if (this.phase === 'countdown' && this.countdownEndsAt !== null && now >= this.countdownEndsAt) {
             this.phase = 'playing';
             this.startedAt = now;
@@ -431,6 +478,7 @@ export class Room {
         if (this.phase !== 'playing') return;
 
         this.stepBots(now);
+        this.stepDemoBots(now);
         this.stepHolds(now);
         if (this.phase !== 'playing') return;
         this.stepZone(now);
@@ -521,6 +569,8 @@ export class Room {
         if (!a.connected || !b.connected) return undefined;
         const dbg = this.debugProx.get(pairKey(a.id, b.id));
         if (dbg) return dbg;
+        // Demo players have no Bluetooth: their proximity comes from GPS distance.
+        if (a.demo || b.demo) return this.gpsZone(a, b, now);
         const ab = this.prox.get(a.id)?.get(b.bleId);
         const ba = this.prox.get(b.id)?.get(a.bleId);
         const heard = ab && now - ab.at <= PROX_STALE_MS ? ab.zone : undefined;
@@ -528,6 +578,13 @@ export class Room {
         if (heard === 'HOT' || reported === 'HOT') return 'HOT';
         if (heard === 'WARM' || reported === 'WARM') return 'WARM';
         return heard ?? reported;
+    }
+
+    private gpsZone(a: Player, b: Player, now: number): Zone | undefined {
+        const fa = this.positions.get(a.id), fb = this.positions.get(b.id);
+        if (!fa || !fb || now - fa.at > DEMO_FIX_FRESH_MS || now - fb.at > DEMO_FIX_FRESH_MS) return undefined;
+        const d = distanceMeters(fa, fb);
+        return d <= DEMO_HOT_M ? 'HOT' : d <= DEMO_WARM_M ? 'WARM' : d <= DEMO_COLD_M ? 'COLD' : undefined;
     }
 
     inRange(a: Player, b: Player, now: number): boolean {
@@ -666,6 +723,18 @@ export class Room {
         }
     }
 
+    /** Host-only, always available (not a debug tool): 3 simulated people who walk around near the host. */
+    addDemoPlayers(byId: string, now: number) {
+        this.requireHost(byId);
+        if (this.phase !== 'lobby') throw new GameError('Add demo players in the lobby');
+        const room = this.settings.maxPlayers - this.players.size;
+        if (room <= 0) throw new GameError('Room is full');
+        for (const name of DEMO_NAMES.slice(0, room)) {
+            const p = this.join(`demo-${Math.floor(this.rng() * 1e9)}`, name, now, true);
+            p.demo = true;
+        }
+    }
+
     setDebugProx(playerId: string, targetBleId: number, zone: Zone | null) {
         this.requireDebug();
         const target = [...this.players.values()].find((p) => p.bleId === targetBleId);
@@ -695,7 +764,7 @@ export class Room {
 
     /** Bots move around randomly and bite/heal whoever is HOT, so one phone can play a round. */
     private stepBots(now: number) {
-        const bots = this.active().filter((p) => p.isBot);
+        const bots = this.active().filter((p) => p.isBot && !p.demo);
         if (!bots.length) return;
         if (this.botRoam && now - this.lastBotStep > 3000) {
             this.lastBotStep = now;
@@ -721,6 +790,150 @@ export class Room {
                 }
             }
         }
+    }
+
+    // ---------- demo players ----------
+
+    /**
+     * Walks every demo player one GPS step (~1 Hz) and lets them act like a person:
+     * infected drift toward the nearest survivor and bite after staying HOT; survivors wander and
+     * back off from a nearby infected; a doctor walks up to a nearby infected and heals.
+     * Every bite/heal goes through startAction, so hold time, immunity and all rules apply.
+     */
+    private stepDemoBots(now: number) {
+        const bots = this.active().filter((p) => p.demo && p.connected);
+        if (!bots.length) return;
+        if (this.lastDemoStep && now - this.lastDemoStep < DEMO_STEP_MS) return;
+        const dt = this.lastDemoStep ? Math.min(2, (now - this.lastDemoStep) / 1000) : 1;
+        this.lastDemoStep = now;
+        for (const b of bots) {
+            const s = this.demoBots.get(b.id);
+            if (s) this.walkDemoBot(b, s, dt, now);
+            else this.spawnDemoBot(b, now);
+        }
+        if (this.phase === 'playing') for (const b of bots) this.demoAct(b, now);
+        this.dirty = true;
+    }
+
+    private spawnDemoBot(b: Player, now: number) {
+        // Around the host's real position, or any real player's if the host has no fix yet.
+        const real = [this.hostId, ...[...this.players.values()].filter((p) => !p.isBot).map((p) => p.id)];
+        const anchor = real.map((id) => this.fix(id, now)).find((f) => !!f);
+        if (!anchor) return; // wait for someone's GPS
+        const [lo, hi] = DEMO_SPAWN_M;
+        const pos = offsetMeters(anchor, lo + this.rng() * (hi - lo), this.rng() * 360);
+        const [w0, w1] = DEMO_WALK_MPS;
+        this.demoBots.set(b.id, {
+            pos,
+            anchor: { lat: anchor.lat, lng: anchor.lng },
+            heading: this.rng() * 360,
+            turn: 0,
+            pace: w0 + this.rng() * (w1 - w0),
+            pauseUntil: 0,
+            hotTargetId: null,
+            hotSince: 0,
+        });
+        this.positions.set(b.id, { ...pos, at: now });
+    }
+
+    /** Nearest active player (other than b) with a fresh fix that passes `ok`. */
+    private nearest(b: Player, from: LatLng, now: number, ok: (p: Player) => boolean) {
+        let best: { p: Player; at: LatLng; d: number } | null = null;
+        for (const p of this.active()) {
+            if (p.id === b.id || !p.connected || !ok(p)) continue;
+            const f = this.positions.get(p.id);
+            if (!f || now - f.at > DEMO_FIX_FRESH_MS) continue;
+            const d = distanceMeters(from, f);
+            if (!best || d < best.d) best = { p, at: f, d };
+        }
+        return best;
+    }
+
+    private walkDemoBot(b: Player, s: DemoBot, dt: number, now: number) {
+        let desired: number;
+        let speed = s.pace;
+        /** don't walk closer than this to the thing we approach */
+        let stopShortM = 0;
+        let maxStep = Infinity;
+        const playing = this.phase === 'playing';
+        // Infected go for real people first (that's who the demo is for), then other demo players.
+        const biteable = (p: Player) => p.role !== 'infected' && p.immuneUntil <= now;
+        const prey = playing && b.role === 'infected'
+            ? this.nearest(b, s.pos, now, (p) => !p.isBot && biteable(p)) ?? this.nearest(b, s.pos, now, biteable) : null;
+        const patient = playing && b.role === 'doctor' && b.healsLeft > 0
+            ? this.nearest(b, s.pos, now, (p) => p.role === 'infected') : null;
+        const threat = playing && b.role !== 'infected'
+            ? this.nearest(b, s.pos, now, (p) => p.role === 'infected') : null;
+        if (prey) {
+            desired = bearingDeg(s.pos, prey.at);
+            speed = DEMO_CHASE_MPS;
+            stopShortM = 1;
+            maxStep = Math.max(0, prey.d - stopShortM);
+        } else if (patient && patient.d <= DEMO_WARM_M) {
+            desired = bearingDeg(s.pos, patient.at);
+            speed = DEMO_CHASE_MPS;
+            maxStep = Math.max(0, patient.d - 1.5);
+        } else if (threat && threat.d <= DEMO_WARM_M) {
+            desired = bearingDeg(threat.at, s.pos); // walk away
+            speed = DEMO_MAX_MPS;
+        } else {
+            // Wander: a smoothly drifting turn rate and the odd short pause.
+            s.turn = Math.max(-25, Math.min(25, s.turn + (this.rng() - 0.5) * 30 * dt));
+            desired = s.heading + s.turn * dt;
+            if (now < s.pauseUntil) speed = 0;
+            else if (this.rng() < 0.04 * dt) {
+                s.pauseUntil = now + 2000 + this.rng() * 3000;
+                speed = 0;
+            }
+        }
+        // Stay inside the safe zone (or near spawn before it exists): head back toward the middle.
+        const area = this.zone ? { c: this.zone.center, r: this.zone.radiusM - DEMO_EDGE_MARGIN_M } : { c: s.anchor, r: DEMO_LEASH_M };
+        const fromCenter = distanceMeters(s.pos, area.c);
+        if (fromCenter > Math.max(2, area.r)) {
+            desired = bearingDeg(s.pos, area.c);
+            speed = Math.max(speed, s.pace);
+            maxStep = Infinity;
+            s.pauseUntil = 0;
+        }
+        // Turn smoothly toward where we want to go.
+        const delta = ((desired - s.heading + 540) % 360) - 180;
+        const maxTurn = DEMO_TURN_DEG_PER_S * dt;
+        s.heading = (s.heading + Math.max(-maxTurn, Math.min(maxTurn, delta)) + 360) % 360;
+        // Mostly-backwards targets: slow down while turning around, like a person would.
+        const facing = Math.cos((Math.min(180, Math.abs(delta) - Math.min(Math.abs(delta), maxTurn)) * Math.PI) / 180);
+        const step = Math.min(Math.min(speed, DEMO_MAX_MPS) * dt * Math.max(0.3, facing), maxStep);
+        if (step > 0.01) s.pos = offsetMeters(s.pos, step, s.heading);
+        this.positions.set(b.id, { ...s.pos, at: now });
+    }
+
+    /** Start a bite/heal through the normal rules once the bot has been HOT on a valid target long enough. */
+    private demoAct(b: Player, now: number) {
+        const s = this.demoBots.get(b.id);
+        if (!s || this.holds.has(b.id) || b.status !== 'active') return;
+        let target: Player | null = null;
+        for (const t of this.active()) {
+            if (t.id === b.id || !this.inRange(b, t, now)) continue;
+            try {
+                this.validate(b, t, now);
+                target = t;
+                if (t.id === s.hotTargetId) break;
+            } catch { /* not a valid target */ }
+        }
+        if (!target) {
+            s.hotTargetId = null;
+            return;
+        }
+        if (target.id !== s.hotTargetId) {
+            s.hotTargetId = target.id;
+            s.hotSince = now;
+            return;
+        }
+        const wait = b.role === 'doctor' ? DEMO_HEAL_AFTER_MS : DEMO_BITE_AFTER_MS;
+        if (now - s.hotSince < wait) return;
+        try {
+            this.startAction(b.id, target.bleId, now);
+            s.hotTargetId = null;
+        } catch { /* rules said no; try again next step */ }
     }
 
     // ---------- location, safe zone, pings ----------
@@ -749,6 +962,8 @@ export class Room {
         this.zonePending = false;
         this.pings.clear();
         this.pingAt = null;
+        this.demoBots.clear();
+        this.lastDemoStep = 0;
         for (const p of this.players.values()) p.outsideZoneSince = null;
     }
 
@@ -775,7 +990,7 @@ export class Room {
         };
         // Debug bots get a spot inside the zone so pings and the map have something to show.
         if (this.debugEnabled) {
-            for (const b of this.active().filter((p) => p.isBot)) {
+            for (const b of this.active().filter((p) => p.isBot && !p.demo)) {
                 this.positions.set(b.id, { ...offsetMeters(center, this.rng() * r * 0.6, this.rng() * 360), at: now });
             }
         }
@@ -834,9 +1049,15 @@ export class Room {
         }
     }
 
+    /** Rooms with demo players ping faster so the demo shows movement. */
+    pingEveryMs() {
+        return [...this.players.values()].some((p) => p.demo) ? DEMO_PING_INTERVAL_MS : PING_INTERVAL_MS;
+    }
+
     private stepPing(now: number) {
-        if (this.pingAt !== null && now - this.pingAt < PING_INTERVAL_MS) return;
-        if (this.pingAt === null && now - (this.startedAt ?? now) < PING_INTERVAL_MS) return; // first ping after 30 s
+        const every = this.pingEveryMs();
+        if (this.pingAt !== null && now - this.pingAt < every) return;
+        if (this.pingAt === null && now - (this.startedAt ?? now) < every) return; // first ping after one interval
         this.pingAt = now;
         this.pings.clear();
         for (const p of this.active()) {
@@ -919,6 +1140,7 @@ export class Room {
                 name: p.name,
                 isHost: p.id === this.hostId,
                 isBot: p.isBot,
+                isDemo: !!p.demo,
                 ready: p.ready,
                 connected: p.connected,
                 status: p.status,
@@ -953,6 +1175,7 @@ export class Room {
             allies: this.alliesFor(me, now),
             pings: this.pingsFor(me),
             pingAt: this.pingsVisibleTo(me) ? this.pingAt : null,
+            pingEveryMs: this.pingEveryMs(),
         };
     }
 }
@@ -985,6 +1208,13 @@ export function distanceMeters(a: LatLng, b: LatLng): number {
     const dLng = rad(b.lng - a.lng);
     const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
     return 2 * EARTH_R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/** Compass bearing (0 = north, clockwise) from a to b, in degrees. */
+export function bearingDeg(a: LatLng, b: LatLng): number {
+    const y = Math.sin(rad(b.lng - a.lng)) * Math.cos(rad(b.lat));
+    const x = Math.cos(rad(a.lat)) * Math.sin(rad(b.lat)) - Math.sin(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.cos(rad(b.lng - a.lng));
+    return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 }
 
 /** The point `meters` away from `from` in compass direction `bearingDeg`. */
