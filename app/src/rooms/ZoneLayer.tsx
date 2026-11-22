@@ -1,5 +1,5 @@
 /**
- * Things drawn on the round map: the safe zone (white dotted edge + red tint outside),
+  * Things drawn on the round map: the safe zone (dark dotted edge + red tint outside),
  * live pins for fellow infected, and the fading grey dots of the last 30 s ping.
  */
 import { Marker, Polygon, Polyline } from 'react-native-maps';
@@ -35,7 +35,7 @@ export function ZoneOverlay({ zone, flash }: { zone: ZoneView; flash: boolean })
       <Polygon coordinates={outer} holes={[edge]} fillColor="rgba(230,57,70,0.16)" strokeColor="rgba(0,0,0,0)" strokeWidth={1} />
       <Polyline
         coordinates={[...edge, edge[0]]}
-        strokeColor={flash ? C.red : 'rgba(255,255,255,0.95)'}
+        strokeColor={flash ? C.red : 'rgba(20,24,36,0.9)'}
         strokeWidth={flash ? 4 : 3}
         lineDashPattern={[10, 8]}
       />
@@ -72,8 +72,8 @@ export function PingDots({ pings, pingAt, now, fadeMs = 25_000 }: { pings: LatLn
     <>
       {pings.map((p, i) => (
         <Marker key={`${pingAt}-${i}`} coordinate={toMap(p)} anchor={{ x: 0.5, y: 0.5 }} opacity={opacity}>
-          <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(225,230,240,0.3)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.6)', alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#eef1f6' }} />
+          <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(60,66,82,0.25)', borderWidth: 1, borderColor: 'rgba(60,66,82,0.7)', alignItems: 'center', justifyContent: 'center' }}>
+            <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#4a5163', borderWidth: 1.5, borderColor: '#fff' }} />
           </View>
         </Marker>
       ))}
