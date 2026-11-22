@@ -2,8 +2,7 @@
  * One Socket.IO connection to the game server, plus React hooks that expose the
  * latest RoomView and one-off events (notices, bite/heal progress).
  */
-import Constants from 'expo-constants';
-import { Platform } from 'react-native';
+import { defaultServerUrl } from './serverUrl';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { io, Socket } from 'socket.io-client';
 import type {
@@ -14,15 +13,6 @@ import type {
     RoomView,
     ServerToClient,
 } from '../../../shared/protocol';
-
-function defaultServerUrl() {
-    if (process.env.EXPO_PUBLIC_SERVER_URL) return process.env.EXPO_PUBLIC_SERVER_URL;
-    // In dev, the server runs on the same laptop as Metro, so reuse Metro's host.
-    const metroHost = Constants.expoConfig?.hostUri?.split(':')[0];
-    if (metroHost) return `http://${metroHost}:3001`;
-    if (Platform.OS === 'web' && typeof window !== 'undefined') return `http://${window.location.hostname}:3001`;
-    return 'http://localhost:3001';
-}
 
 /** Stable for this app session, so a dropped connection rejoins as the same player. */
 export const playerId = `p-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;

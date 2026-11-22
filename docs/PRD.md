@@ -110,15 +110,6 @@ Primary actions:
 
 * Host Game  
 * Join Game  
-* How to Play
-
-The tutorial should consist of three swipeable cards:
-
-1. Roles and objectives.  
-2. Bite and Heal mechanics.  
-3. Safe zone and elimination rules.
-
-The tutorial must be skippable.
 
 ## **3.2 Permissions**
 
@@ -141,7 +132,7 @@ When a player selects Host Game:
 * The host enters the lobby.  
 * Other players can join using the room code.
 
-The host is responsible for configuring game settings and starting the round.
+The host configures game settings and marks themselves ready to start the round with the group.
 
 ## **3.4 Joining a Game**
 
@@ -171,7 +162,7 @@ The lobby should display:
 * Player connection status.  
 * Game settings.  
 * Ready status.  
-* Start button for the host.
+* One Ready button at the bottom for each player, including the host.
 
 All players can view the settings, but only the host can modify them.
 
@@ -184,7 +175,7 @@ Host controls:
 * Change game settings.  
 * Kick players.  
 * Transfer host privileges.  
-* Start the game once requirements are satisfied.
+* Mark themselves Ready or undo readiness while waiting for the group.
 
 Player controls:
 
@@ -192,7 +183,7 @@ Player controls:
 * Leave the lobby.  
 * Rejoin the lobby if disconnected.
 
-The Start button remains disabled until:
+The round starts automatically once:
 
 * At least three players have joined.  
 * All connected players are Ready.  
@@ -266,7 +257,7 @@ If a player fails calibration, the host should receive a warning before starting
 
 Once all checks are completed:
 
-* The host starts the round.  
+* The group starts the round by marking themselves ready in the lobby.
 * A 30-second countdown begins.  
 * Players receive a message indicating that they should disperse.  
 * Role reveal becomes available after the countdown.
@@ -616,17 +607,18 @@ The game should display:
 * Number of eliminated players.  
 * Final player standings.
 
-### **Planned Feature: Infection Tree**
+### **Infection Tree**
 
-A future recap screen should visualize:
+The round recap shows how infection spread:
 
-* Who infected whom.  
-* When each infection occurred.  
-* Which players were cured.  
-* Who survived.  
-* The overall infection progression.
+* Each player who started infected anchors a tree. Branches connect each successful bite to the player it infected.
+* Screen reader labels include bite times. Cures are marked on the corresponding infection, and a reinfection gets its own branch.
+* The summary card identifies the doctor. If bitten, the doctor is also marked on their branch. Cured players show who healed them.
+* Final standings show who survived and each player's final role.
 
-Players should be able to share a game recap card.
+Sharing a game recap card is planned.
+
+Any player can bring the group back to the same lobby for a rematch. Players mark themselves ready again before it starts.
 
 ---
 
@@ -809,7 +801,7 @@ The prototype should not be considered successful until the following can be dem
 | Create a room | A unique room code is generated |
 | Join a room | Players enter the same lobby |
 | Duplicate names | Conflicts are resolved |
-| Ready check | Host cannot start before everyone is ready |
+| Ready check | The round starts when all connected players, including the host, are ready and setup requirements are met |
 | Role assignment | Each player receives the correct private role |
 | Radar | Nearby registered players are detected |
 | Role visibility | Radar respects role-specific information |

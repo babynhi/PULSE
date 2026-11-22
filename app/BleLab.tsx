@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { DEFAULT_THRESHOLDS, ProximityTracker, Reading, Zone } from './src/bluetooth/proximity';
+import { FieldChoice, fieldStyles, MenuItem, party } from './src/ui/Menu';
 import { startBluetooth, stopBluetooth } from './src/bluetooth/scanner';
 
-const COLORS: Record<Zone, string> = { HOT: '#ff3b3b', WARM: '#f59e0b', COLD: '#3b82f6' };
+const signalFill: Record<Zone, string> = { HOT: party.orange, WARM: party.lime, COLD: party.sky };
 const myNumber = 1 + Math.floor(Math.random() * 999); // different on each phone
 
 export default function App() {
@@ -14,7 +15,9 @@ export default function App() {
   const [readings, setReadings] = useState<Reading[]>([]);
   const [th, setTh] = useState(DEFAULT_THRESHOLDS);
   const calibSamples = useRef<number[] | null>(null);
+  const calibrationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [calibrating, setCalibrating] = useState(false);
+  const [calibrationResult, setCalibrationResult] = useState('');
 
   // Start/stop Bluetooth, and refresh the list ~3x per second
   useEffect(() => {
@@ -30,6 +33,10 @@ export default function App() {
     const timer = setInterval(() => setReadings(tracker.current.snapshot()), 300);
     return () => {
       clearInterval(timer);
+      if (calibrationTimer.current !== null) clearTimeout(calibrationTimer.current);
+      calibrationTimer.current = null;
+      calibSamples.current = null;
+      setCalibrating(false);
       stopBluetooth();
       setReadings([]);
     };
@@ -55,78 +62,67 @@ export default function App() {
 
   // Hold both phones at "bite distance" for 5 s; HOT line goes just below the median signal
   function calibrate() {
+    if (!running || calibrationTimer.current !== null) return;
     calibSamples.current = [];
     setCalibrating(true);
-    setTimeout(() => {
+    setCalibrationResult('');
+    calibrationTimer.current = setTimeout(() => {
+      calibrationTimer.current = null;
       const s = [...(calibSamples.current ?? [])].sort((a, b) => a - b);
       calibSamples.current = null;
       setCalibrating(false);
-      if (s.length < 5) return setStatus('Calibration failed: the other phone wasn’t heard');
+      if (s.length < 5) return setCalibrationResult('Too few readings. Keep both phones scanning at arm’s length and try again.');
       const hot = Math.round(s[Math.floor(s.length / 2)] - 4);
       tracker.current.thresholds = { hot, warm: hot - 14 };
       setTh(tracker.current.thresholds);
-      setStatus(`Calibrated: HOT ≥ ${hot}, WARM ≥ ${hot - 14}`);
+      setCalibrationResult(`Calibrated: HOT ≥ ${hot} dBm, WARM ≥ ${hot - 14} dBm`);
     }, 5000);
   }
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>PULSE · BLE Lab</Text>
-      <Text style={styles.dim}>I am player #{myNumber}</Text>
-      <Text style={styles.dim}>{status}</Text>
+    <ScrollView style={fieldStyles.page} contentContainerStyle={fieldStyles.content}>
+      <Text style={fieldStyles.title}>PULSE · BLE Lab</Text>
+      <Text style={fieldStyles.muted}>I am player #{myNumber}</Text>
+      <Text style={fieldStyles.muted}>{running ? status : 'Tap Start on both phones'}</Text>
 
-      <View style={[styles.bigCircle, { backgroundColor: closest ? COLORS[closest] : '#1f2430' }]}>
-        <Text style={styles.bigText}>{closest ?? (running ? 'Nobody' : '—')}</Text>
+      <View style={[styles.bigCircle, { backgroundColor: closest ? signalFill[closest] : party.panel }]}>
+        <Text style={fieldStyles.heading}>{closest ?? (running ? 'Nobody' : '—')}</Text>
       </View>
 
-      <Btn label={running ? 'Stop' : 'Start'} onPress={() => setRunning(!running)} />
+      <MenuItem label={running ? 'Stop' : 'Start'} onPress={() => setRunning(!running)} />
 
-      <Text style={styles.section}>Players heard</Text>
-      {readings.length === 0 && <Text style={styles.dim}>None yet</Text>}
+      <Text style={fieldStyles.heading}>Players heard</Text>
+      {readings.length === 0 && <Text style={fieldStyles.muted}>None yet</Text>}
       {readings.map((r) => (
-        <View key={r.playerNumber} style={styles.row}>
-          <Text style={styles.rowText}>Player #{r.playerNumber}</Text>
-          <Text style={[styles.rowText, { color: COLORS[r.zone], fontWeight: 'bold' }]}>{r.zone}</Text>
-          <Text style={styles.rowText}>{r.rssi} dBm</Text>
+        <View key={r.playerNumber} style={[fieldStyles.panel, styles.row]}>
+          <Text style={fieldStyles.body}>Player #{r.playerNumber}</Text>
+          <Text style={[fieldStyles.label, styles.zone, { backgroundColor: signalFill[r.zone] }]}>{r.zone}</Text>
+          <Text style={fieldStyles.body}>{r.rssi} dBm</Text>
         </View>
       ))}
 
-      <Text style={styles.section}>Tuning</Text>
-      <View style={styles.row}>
-        <Text style={styles.rowText}>HOT if ≥ {th.hot}</Text>
-        <Btn small label="−" onPress={() => nudge('hot', -2)} />
-        <Btn small label="+" onPress={() => nudge('hot', 2)} />
+      <Text style={fieldStyles.heading}>Tuning</Text>
+      <View style={[fieldStyles.panel, styles.row]}>
+        <Text style={fieldStyles.body}>HOT if ≥ {th.hot}</Text>
+        <FieldChoice label="−" accessibilityLabel="Decrease hot threshold" onPress={() => nudge('hot', -2)} />
+        <FieldChoice label="+" accessibilityLabel="Increase hot threshold" onPress={() => nudge('hot', 2)} />
       </View>
-      <View style={styles.row}>
-        <Text style={styles.rowText}>WARM if ≥ {th.warm}</Text>
-        <Btn small label="−" onPress={() => nudge('warm', -2)} />
-        <Btn small label="+" onPress={() => nudge('warm', 2)} />
+      <View style={[fieldStyles.panel, styles.row]}>
+        <Text style={fieldStyles.body}>WARM if ≥ {th.warm}</Text>
+        <FieldChoice label="−" accessibilityLabel="Decrease warm threshold" onPress={() => nudge('warm', -2)} />
+        <FieldChoice label="+" accessibilityLabel="Increase warm threshold" onPress={() => nudge('warm', 2)} />
       </View>
-      <Text style={styles.dim}>Calibrate: hold both phones at arm’s length, then tap.</Text>
-      <Btn label={calibrating ? 'Calibrating… hold still' : 'Calibrate HOT distance'} onPress={calibrate} />
+      <Text style={fieldStyles.muted}>{running ? 'Hold the phones at arm’s length for five seconds.' : 'Start scanning on both phones to calibrate.'}</Text>
+      <MenuItem label={calibrating ? 'Calibrating… hold still' : 'Calibrate HOT distance'}
+        disabled={!running || calibrating} busy={calibrating} onPress={calibrate} />
+      {!!calibrationResult && <Text accessibilityLiveRegion="polite" style={fieldStyles.body}>{calibrationResult}</Text>}
     </ScrollView>
   );
 }
 
-function Btn({ label, onPress, small }: { label: string; onPress: () => void; small?: boolean }) {
-  return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.btn, small && styles.btnSmall, pressed && { opacity: 0.6 }]}>
-      <Text style={styles.btnText}>{label}</Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#0b0d12' },
-  content: { padding: 24, paddingTop: 70, gap: 12, alignItems: 'stretch' },
-  title: { color: 'white', fontSize: 26, fontWeight: 'bold', textAlign: 'center' },
-  dim: { color: '#8a90a0', textAlign: 'center' },
-  section: { color: 'white', fontSize: 18, fontWeight: '600', marginTop: 12 },
-  bigCircle: { width: 200, height: 200, borderRadius: 100, alignSelf: 'center', alignItems: 'center', justifyContent: 'center', marginVertical: 12 },
-  bigText: { color: 'white', fontSize: 36, fontWeight: 'bold' },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#161a22', padding: 12, borderRadius: 10, gap: 8 },
-  rowText: { color: 'white', fontSize: 16 },
-  btn: { backgroundColor: '#2f6bff', padding: 14, borderRadius: 12, alignItems: 'center' },
-  btnSmall: { paddingVertical: 6, paddingHorizontal: 16 },
-  btnText: { color: 'white', fontSize: 16, fontWeight: '600' },
+  bigCircle: { width: 200, height: 200, borderRadius: 100, alignSelf: 'center', alignItems: 'center',
+    justifyContent: 'center', marginVertical: 12, borderWidth: 2, borderColor: party.ink },
+  row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  zone: { paddingHorizontal: 8, paddingVertical: 4 },
 });

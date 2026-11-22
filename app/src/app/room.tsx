@@ -1,103 +1,67 @@
-/**
- * Room lobby: share the code, see who's in, Ready up, and the host starts the round.
- * When the server moves past the lobby, everyone is sent to the round screen.
- */
 import { useCallback, useEffect, useState } from 'react';
-import { BackHandler, Pressable, ScrollView, Share, Text, View } from 'react-native';
-import { router, Stack } from 'expo-router';
+import { BackHandler, Modal, Pressable, ScrollView, Share, StyleSheet, Text } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Redirect } from 'expo-router';
 import { emitAck, leaveGame, send, useGameEvent, useGameStore } from '../net/client';
-import { C, ui } from '../rooms/ui';
-import { LobbySettings } from '../rooms/LobbySettings';
+import { Lobby } from '../rooms/Lobby';
+import { RoomSettingsForm } from '../rooms/RoomSettingsForm';
+import { FieldChoice, fieldStyles, MenuItem, party } from '../ui/Menu';
 
 export default function Room() {
   const { view, connected } = useGameStore();
-  const [error, setError] = useState('');
-  const [starting, setStarting] = useState(false);
-
+  const [panel, setPanel] = useState<'settings' | 'players' | null>(null);
+  const [playerId, setPlayerId] = useState('');
+  const [message, setMessage] = useState('');
+  const close = () => { setPanel(null); setPlayerId(''); };
   useEffect(() => {
-    if (!view) router.replace('/');
-    else if (view.phase !== 'lobby') router.replace('/round');
-  }, [view]);
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
+    return () => sub.remove();
+  }, []);
+  useGameEvent('notice', useCallback(n => { if (n.kind !== 'kicked') setMessage(n.text); }, []));
 
-  useEffect(() => { const sub = BackHandler.addEventListener('hardwareBackPress', () => true); return () => sub.remove(); }, []);
-
-  useGameEvent('notice', useCallback((n) => { if (n.kind !== 'kicked') setError(n.text); }, []));
-
-  if (!view) return null;
-  const me = view.players.find((p) => p.id === view.youId);
+  if (!view) return <Redirect href="/" />;
+  if (view.phase !== 'lobby') return <Redirect href="/round" />;
   const isHost = view.hostId === view.youId;
-
-  async function start() {
-    setStarting(true);
-    setError('');
-    const err = await emitAck('game:start');
-    setStarting(false);
-    if (err) setError(err);
-  }
-
-  return (
-    <ScrollView style={ui.page} contentContainerStyle={ui.content}>
-      <Stack.Screen options={{ title: 'Lobby', headerBackVisible: false, gestureEnabled: false }} />
-      <Text style={ui.muted}>ROOM CODE</Text>
-      <Text style={styles.code} accessibilityLabel={'Room code ' + view.code.split('').join(' ')}>{view.code}</Text>
-      <Pressable style={ui.secondary} onPress={() => Share.share({ message: 'Join my PULSE room: ' + view.code }).catch(() => { })}>
-        <Text style={ui.secondaryText}>Share room code</Text>
-      </Pressable>
-      {!connected && <Text style={ui.error}>Reconnecting…</Text>}
-
-      <Text style={ui.heading}>Players · {view.players.length}</Text>
-      <View style={ui.card}>
-        {view.players.map((p) => (
-          <View key={p.id} style={styles.row}>
-            <Text style={styles.name} numberOfLines={1}>
-              {p.name}{p.id === view.youId ? ' (you)' : ''}{p.isBot && !/^bot/i.test(p.name) ? ' · bot' : ''}
-            </Text>
-            <Text style={[styles.status, { color: p.isHost ? C.red : !p.connected ? C.muted : p.ready ? C.green : C.amber }]}>
-              {p.isHost ? 'HOST' : !p.connected ? 'OFFLINE' : p.ready ? 'READY' : 'NOT READY'}
-            </Text>
-          </View>
-        ))}
-      </View>
-
-      <LobbySettings view={view} isHost={isHost} />
-
-      {view.debugEnabled && isHost && (
-        <Pressable style={ui.secondary} onPress={() => send('debug:addBots', { count: 1 })}>
-          <Text style={ui.secondaryText}>+ Add a bot{view.players.length < 3 ? ' (need 3 players)' : ''}</Text>
-        </Pressable>
-      )}
-
-      {isHost ? (
-        <>
-          <Pressable disabled={starting || !view.canStart} onPress={start}
-            style={({ pressed }) => [ui.primary, (pressed || starting || !view.canStart) && ui.dimmed]}>
-            <Text style={ui.primaryText}>{starting ? 'Starting…' : 'START GAME'}</Text>
-          </Pressable>
-          {view.startBlockers.map((b) => <Text key={b} style={ui.muted}>• {b}</Text>)}
-          {view.warnings.map((w) => <Text key={w} style={[ui.muted, { color: C.amber }]}>• {w}</Text>)}
-        </>
-      ) : (
-        <>
-          <Pressable onPress={() => send('lobby:ready', { ready: !me?.ready })}
-            style={({ pressed }) => [me?.ready ? ui.secondary : ui.primary, pressed && ui.dimmed]}>
-            <Text style={me?.ready ? ui.secondaryText : ui.primaryText}>{me?.ready ? "I'm not ready" : "I'M READY"}</Text>
-          </Pressable>
-          <Text style={ui.muted}>Waiting for the host to start the game.</Text>
-        </>
-      )}
-
-      {error !== '' && <Text style={ui.error}>{error}</Text>}
-      <View style={{ flex: 1 }} />
-      <Pressable style={ui.secondary} onPress={leaveGame}>
-        <Text style={[ui.secondaryText, { color: C.muted }]}>Leave room</Text>
-      </Pressable>
-    </ScrollView>
-  );
+  const otherPlayers = view.players.filter(player => player.id !== view.youId);
+  const selected = otherPlayers.find(player => player.id === playerId);
+  const manage = panel === 'players' && isHost;
+  const share = async () => {
+    try { await Share.share({ message: 'Join my PULSE room: ' + view.code }); }
+    catch { setMessage('Sharing is unavailable. Give your friends the room code above.'); }
+  };
+  return <>
+    <Lobby roomCode={view.code} players={view.players} youId={view.youId} settings={view.settings}
+      onReady={ready => { if (connected) send('lobby:ready', { ready }); }} readyDisabled={!connected}
+      onLeave={leaveGame} onSettings={() => setPanel('settings')} onShare={share}
+      onManage={isHost && otherPlayers.length > 0 && connected ? () => setPanel('players') : undefined}
+      messages={[...view.startBlockers.filter(reason => !reason.startsWith('Waiting for ')), ...view.warnings]}
+      error={connected ? message : 'Reconnecting to the room…'} />
+    {(panel === 'settings' || manage) && <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
+      <SafeAreaView edges={['top', 'left', 'right']} style={s.header}>
+        <Text accessibilityRole="header" style={fieldStyles.heading}>{manage ? 'Manage players' : 'Game settings'}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={manage ? 'Close player management' : 'Close settings'}
+          onPress={close} style={s.close}><Text style={fieldStyles.label}>Close</Text></Pressable>
+      </SafeAreaView>
+      {manage ? <ScrollView style={fieldStyles.page} contentContainerStyle={fieldStyles.content}>
+        {selected ? <>
+          <Text accessibilityRole="header" style={fieldStyles.heading}>{selected.name}</Text>
+          {!selected.isBot && <MenuItem label={'Make ' + selected.name + ' host'} disabled={!connected || !selected.connected}
+            onPress={() => { send('lobby:transferHost', { playerId: selected.id }); close(); }} />}
+          <MenuItem secondary label={'Remove ' + selected.name + ' from room'} disabled={!connected}
+            onPress={() => { send('lobby:kick', { playerId: selected.id }); close(); }} />
+        </> : otherPlayers.map(player =>
+          <FieldChoice key={player.id} label={player.name} accessibilityLabel={'Manage ' + player.name} onPress={() => setPlayerId(player.id)} />)}
+      </ScrollView> : <RoomSettingsForm settings={view.settings} canEdit={isHost} settingsVersion={view.settingsVersion}
+        changedKeys={view.changedKeys} onClose={close} onSave={async patch => {
+          if (!connected) throw new Error('Reconnect to save your settings.');
+          const error = await emitAck('lobby:settings', { patch });
+          if (error) throw new Error(error);
+        }} />}
+    </Modal>}
+  </>;
 }
 
-const styles = {
-  code: { color: C.text, fontSize: 52, fontWeight: '900' as const, letterSpacing: 10, marginBottom: 4 },
-  row: { flexDirection: 'row' as const, justifyContent: 'space-between' as const, alignItems: 'center' as const, paddingVertical: 8, gap: 12 },
-  name: { color: C.text, fontSize: 17, flexShrink: 1 },
-  status: { fontSize: 13, fontWeight: '800' as const, letterSpacing: 1 },
-};
+const s = StyleSheet.create({
+  header: { ...fieldStyles.row, justifyContent: 'space-between', backgroundColor: party.sky, paddingHorizontal: 20 },
+  close: { minWidth: 64, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
+});

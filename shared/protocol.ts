@@ -134,6 +134,8 @@ export interface MyState {
 /** Registered devices this player may see on radar. */
 export interface RadarEntry {
     bleId: number;
+    /** Strongest fresh proximity bucket reported by either phone. Absent when out of sight. */
+    zone?: Zone;
     /** true only when the viewer is infected and so is this player. */
     ally: boolean;
     /** Only filled for allies. Everyone else is anonymous. */
@@ -246,7 +248,7 @@ export type Ack<T = {}> = (res: ({ ok: true } & T) | { ok: false; error: string 
 export interface ClientToServer {
     'room:create': (p: { playerId: string; name: string }, ack: Ack<{ code: string }>) => void;
     'room:join': (p: { playerId: string; name: string; code: string }, ack: Ack<{ code: string }>) => void;
-    'room:leave': () => void;
+    'room:leave': (ack?: () => void) => void;
     'lobby:ready': (p: { ready: boolean }) => void;
     'lobby:settings': (p: { patch: Partial<Settings> }, ack?: Ack) => void;
     'lobby:kick': (p: { playerId: string }) => void;
