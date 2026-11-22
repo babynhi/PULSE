@@ -356,7 +356,7 @@ export interface ClientToServer {
     'room:join': (p: { playerId: string; name: string; code: string; icon?: string }, ack: Ack<{ code: string }>) => void;
     /**
      * Host only, demo rooms only: Story mode. Demo players follow a fixed storyline (as innocent:
-     * bitten at 15 s, cured at 35 s, survivors win at 45 s; as doctor: an infected walks up at 10 s).
+     * bitten at 20 s, cured at 40 s, survivors win at 50 s; as doctor: an infected walks up at 10 s).
      */
     'lobby:story': (p: { on: boolean }, ack?: Ack) => void;
     /** Host only, demo rooms only: start the next round as this role (null = random). */

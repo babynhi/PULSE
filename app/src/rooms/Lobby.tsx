@@ -132,7 +132,7 @@ export function Lobby({ roomCode, youId, players, settings, onSettings, onReady,
                 <Text style={[fieldStyles.label, s.storyLabel]}>Story mode</Text>
                 <Text style={fieldStyles.muted}>{story
                   ? (testRole === 'doctor' ? 'Doctor: an infected walks up to you at 10 s and waits for your cure.'
-                    : testRole === 'innocent' ? 'Innocent: bitten at 15 s, cured by the doctor at 35 s, survivors win at 45 s.'
+                    : testRole === 'innocent' ? 'Innocent: bitten at 20 s, cured by the doctor at 40 s, survivors win at 50 s.'
                     : 'Pick Innocent or Doctor for a scripted story. Otherwise demo players just won’t bite or heal.')
                   : 'Demo players follow a fixed, timed storyline. Great for a stage demo.'}</Text>
                 <View style={s.testChoices} accessibilityRole="radiogroup">

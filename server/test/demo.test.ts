@@ -267,11 +267,11 @@ test('switch role mid-round: demo rooms only, no role card', () => {
     assert.ok(roles.includes('infected') && roles.includes('doctor'), roles.join());
 });
 
-test('story mode, host innocent: bitten at 15 s, cured at 35 s, survivors win at 45 s', () => {
+test('story mode, host innocent: bitten at 20 s, cured at 40 s, survivors win at 50 s', () => {
     const { room, host, bots, advance, now } = setup({ roles: ['innocent', 'infected', 'innocent', 'doctor'] });
     room.story = true;
     const t = () => now() - room.startedAt!;
-    advance(13_000);
+    advance(STORY_BITE_MS - 2000);
     assert.equal(host.role, 'innocent');
     assert.equal(room.viewFor('p0', now()).me!.danger, 'HOT', 'the zombie has walked right up');
     advance(STORY_BITE_MS - t() + 200);
