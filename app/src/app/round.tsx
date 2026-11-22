@@ -136,7 +136,18 @@ export default function Round() {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => { setLeaving(true); return true; });
     return () => sub.remove();
   }, []);
+  // Bitten: a short red toast over the map instead of a role screen (auto-hides after 3 s).
+  const [infectedToast, setInfectedToast] = useState(0);
+  useEffect(() => {
+    if (!infectedToast) return;
+    const t = setTimeout(() => setInfectedToast(0), 3000);
+    return () => clearTimeout(t);
+  }, [infectedToast]);
   useGameEvent('notice', useCallback((notice) => {
+    if (notice.kind === 'youWereInfected') {
+      setInfectedToast(Date.now());
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+    }
     if (notice.kind === 'youWereInfected') void alertInBackground('infected', '🧟 You\'ve been infected!', 'You are INFECTED now. Hunt the survivors.');
     else if (notice.kind === 'youWereCured') void alertInBackground('cured', '💉 You\'ve been cured', notice.text);
     else if (notice.kind === 'eliminated') void alertInBackground('eliminated', '☠️ You\'re out', notice.text);
@@ -172,6 +183,11 @@ export default function Round() {
           onStartAction={async id => { const error = await emitAck('action:start', { targetBleId: id }); if (error) throw new Error(error); }}
           zone={<RoundMap room={view} position={position} band={nearest} />} /> : null}
     {phase === 'playing' && view.me?.status === 'active' && <DangerPulse danger={danger} level={view.me?.dangerLevel} />}
+    {phase === 'playing' && infectedToast > 0 && <View pointerEvents="none" style={styles.infectedToast}
+      accessibilityRole="alert" accessibilityLiveRegion="assertive">
+      <Text style={styles.infectedToastText}>🧟 You’ve been infected</Text>
+      <Text style={styles.infectedToastSub}>You’re a zombie now. Bite the survivors.</Text>
+    </View>}
     {cured && <Modal transparent animationType="fade" onRequestClose={closeCured}>
       <View style={styles.curedBackdrop} accessibilityViewIsModal>
         <Text style={styles.curedIcon}>💉</Text>
@@ -199,6 +215,11 @@ const styles = StyleSheet.create({
   boundary: { paddingHorizontal: 12, paddingVertical: 6, borderLeftWidth: 4, borderColor: party.alert },
   backdrop: { flex: 1, padding: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0008' },
   dialog: { width: '100%', maxWidth: 400 },
+  infectedToast: { position: 'absolute', left: 16, right: 16, top: 150, paddingVertical: 12, paddingHorizontal: 16,
+    borderRadius: 14, borderWidth: 2, borderColor: party.ink, backgroundColor: '#e63946', gap: 2,
+    shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
+  infectedToastText: { color: '#fff', fontSize: 20, fontWeight: '900' },
+  infectedToastSub: { color: '#fff', fontSize: 15, fontWeight: '700' },
   curedBackdrop: { flex: 1, padding: 28, gap: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: party.lime },
   curedIcon: { fontSize: 72 },
   curedTitle: { ...fieldStyles.title, textAlign: 'center' },

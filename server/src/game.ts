@@ -103,7 +103,7 @@ interface DemoBot {
 }
 
 /** Story mode timings (ms from round start, or after the previous story beat). */
-export const STORY_BITE_MS = 15_000;
+export const STORY_BITE_MS = 20_000;
 export const STORY_CURE_HOST_AFTER_MS = 20_000;
 export const STORY_CURE_ZOMBIE_AFTER_MS = 10_000;
 export const STORY_DOCTOR_APPROACH_MS = 10_000;
@@ -819,7 +819,8 @@ export class Room {
     private applyBite(actor: Player, target: Player, now: number) {
         const wasDoctor = target.role === 'doctor';
         target.role = 'infected';
-        target.roleAcked = target.isBot;
+        // No role card mid-round: the bitten player stays on the map (the app shows a toast).
+        target.roleAcked = true;
         target.infectedAt = now;
         actor.bites++;
         this.addMark(target, actor, now);
@@ -1066,7 +1067,7 @@ export class Room {
             return;
         }
         if (hostRole !== 'innocent' || !zombie) return;
-        // 1. The zombie walks up and bites the host at 15 s.
+        // 1. The zombie walks up and bites the host at 20 s.
         if (st.bitAt === null) {
             approach(zombie, 0, STORY_BITE_MS - 1000, 1);
             if (t >= STORY_BITE_MS && host.role !== 'infected' && zombie.role === 'infected') {
