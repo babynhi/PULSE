@@ -2,7 +2,7 @@ import { Stack } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import type { PublicPlayer, Settings } from '../../../shared/protocol';
+import type { PublicPlayer, Role, Settings } from '../../../shared/protocol';
 import { FieldChoice, fieldStyles, MenuItem, MenuPaper, menuActionLayout, party, TrackStripe } from '../ui/Menu';
 import { formatDuration } from '../ui/formatDuration';
 import { HeaderAction } from '../ui/HeaderAction';
@@ -24,13 +24,17 @@ interface LobbyProps {
   onAddDemo?: () => void;
   /** Opens the icon picker for your own icon. */
   onChangeIcon?: () => void;
+  /** Host, demo rooms only: the role to start the next round as (null = random). */
+  testRole?: Role | null;
+  onTestRole?: (role: Role | null) => void;
+  doctorEnabled?: boolean;
   readyDisabled?: boolean;
   messages?: string[];
   error?: string;
 }
 
 export function Lobby({ roomCode, youId, players, settings, onSettings, onReady, onCopy, onLeave,
-  onManage, onAddDemo, onChangeIcon, readyDisabled, messages, error }: LobbyProps) {
+  onManage, onAddDemo, onChangeIcon, testRole, onTestRole, doctorEnabled = true, readyDisabled, messages, error }: LobbyProps) {
   const { height } = useWindowDimensions();
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   useEffect(() => {
@@ -109,6 +113,19 @@ export function Lobby({ roomCode, youId, players, settings, onSettings, onReady,
                 </View>
               );
             })}
+            {onTestRole && <View style={s.testRole}>
+              <Text style={fieldStyles.label}>Test my role</Text>
+              <Text style={fieldStyles.muted}>Demo rooms only. Pick the role you start the round with.</Text>
+              <View style={s.testChoices} accessibilityRole="radiogroup">
+                {([null, 'innocent', 'doctor', 'infected'] as (Role | null)[]).filter(r => r !== 'doctor' || doctorEnabled).map(r => {
+                  const on = (testRole ?? null) === r;
+                  return <Pressable key={r ?? 'random'} accessibilityRole="radio" accessibilityState={{ checked: on }}
+                    onPress={() => onTestRole(r)} style={[s.testChip, on && s.testChipOn]}>
+                    <Text style={[fieldStyles.label, s.testChipText]}>{r ? r[0].toUpperCase() + r.slice(1) : 'Random'}</Text>
+                  </Pressable>;
+                })}
+              </View>
+            </View>}
             <View style={s.rosterFooter}>
               <Text accessibilityLiveRegion="polite" style={fieldStyles.label}>{readyCount}/{connected.length} players ready</Text>
               <Text style={fieldStyles.muted}>The round starts when everyone is ready.</Text>
@@ -148,6 +165,11 @@ const s = StyleSheet.create({
   playerRow: { ...fieldStyles.row, justifyContent: 'space-between', alignItems: 'center', columnGap: 10, paddingVertical: 8 },
   compactPlayerRow: { paddingVertical: 4 },
   playerName: { ...fieldStyles.body, flex: 1, flexShrink: 1, fontWeight: '900' },
+  testRole: { gap: 6, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderColor: party.line },
+  testChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  testChip: { minHeight: 40, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 20, borderWidth: 2, borderColor: party.ink },
+  testChipOn: { backgroundColor: party.lime },
+  testChipText: { fontSize: 15 },
   iconButton: { alignItems: 'center', gap: 1 },
   iconHint: { color: party.ink, fontSize: 10, fontWeight: '800' },
   identity: { ...fieldStyles.muted, fontWeight: '600' },

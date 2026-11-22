@@ -79,10 +79,13 @@ export default function Round() {
   const myRole = phase === 'playing' ? view?.me?.role ?? null : null;
   const [cured, setCured] = useState(false);
   const [lastRole, setLastRole] = useState(myRole);
+  // A "Test role" switch is not a cure: don't show the cured screen for it.
+  const [testSwitch, setTestSwitch] = useState(false);
   if (lastRole !== myRole) {
     // Derived during render (not in an effect) so the screen appears on the same frame.
     setLastRole(myRole);
-    if (lastRole === 'infected' && myRole && myRole !== 'infected') setCured(true);
+    setTestSwitch(false);
+    if (!testSwitch && lastRole === 'infected' && myRole && myRole !== 'infected') setCured(true);
     else if (myRole === 'infected') setCured(false);
   }
   useEffect(() => {
@@ -164,6 +167,7 @@ export default function Round() {
       : phase === 'playing' ? <LiveRound room={view} clockOffset={clockOffset} radar={radar} bluetoothStatus={bleStatus}
           feedback={feedback?.text ?? ''} actionProgress={progress}
           onRoleAck={() => { message(''); send('game:roleAck'); }}
+          onTestRole={view.testTools ? role => { setTestSwitch(true); send('debug:setRole', { role }); } : undefined}
           onCancelAction={() => send('action:cancel')}
           onStartAction={async id => { const error = await emitAck('action:start', { targetBleId: id }); if (error) throw new Error(error); }}
           zone={<RoundMap room={view} position={position} band={nearest} />} /> : null}

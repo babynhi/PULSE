@@ -192,6 +192,8 @@ export class Room {
     /** sampled but not yet released (held back by the ping delay) */
     private pingQueue: { at: number; dots: Map<string, LatLng> }[] = [];
     private lastPingSample: number | null = null;
+    /** host's "Test my role" choice for the next round (demo rooms only), null = random */
+    testRole: Role | null = null;
     /** recent anonymous infection spots */
     marks: InfectionMark[] = [];
     private markSeq = 0;
@@ -441,6 +443,7 @@ export class Room {
                 infectedAt: 0,
             });
         });
+        this.applyTestRole();
         this.resetZone();
         this.events = [];
         this.feed = [];
@@ -454,6 +457,26 @@ export class Room {
         this.countdownEndsAt = now + this.settings.disperseSec * 1000;
         this.dirty = true;
         if (this.settings.disperseSec === 0) this.tick(now);
+    }
+
+    /** "Test my role": give the host the role they asked for by swapping with whoever drew it. */
+    private applyTestRole() {
+        const host = this.players.get(this.hostId);
+        const want = this.testRole;
+        if (!host || !want || !this.hasTestTools() || host.role === want) return;
+        const holder = [...this.players.values()].find((p) => p.id !== host.id && p.role === want);
+        const give = (p: Player, role: Role) => Object.assign(p, {
+            role, startRole: role, healsLeft: role === 'doctor' ? this.settings.healCharges : 0,
+        });
+        const old = host.role!;
+        if (holder) give(holder, old);
+        else {
+            // Nobody drew it (e.g. innocent with no innocents left): keep at least one infected.
+            const other = [...this.players.values()].find((p) => p.id !== host.id && p.role === 'innocent')
+                ?? [...this.players.values()].find((p) => p.id !== host.id && p.role !== 'infected');
+            if (old === 'infected' && other) give(other, 'infected');
+        }
+        give(host, want);
     }
 
     roleAck(playerId: string) {
@@ -876,14 +899,41 @@ export class Room {
         this.tick(now);
     }
 
+    /** Test tools (Test my role, switch role) are for demo rooms, so real games stay fair. */
+    hasTestTools() {
+        return this.hasDemo();
+    }
+
+    setTestRole(byId: string, role: Role | null) {
+        this.requireHost(byId);
+        if (this.phase !== 'lobby') throw new GameError('Pick your test role in the lobby');
+        if (!this.hasTestTools()) throw new GameError('Test roles are only for rooms with demo players');
+        if (role !== null && !['infected', 'innocent', 'doctor'].includes(role)) throw new GameError('Unknown role');
+        if (role === 'doctor' && !this.settings.doctorEnabled) throw new GameError('Turn the doctor on first');
+        this.testRole = role;
+        this.dirty = true;
+    }
+
     debugSetRole(playerId: string, role: Role, now = Date.now()) {
-        this.requireDebug();
+        if (!this.hasTestTools()) this.requireDebug();
         const p = this.players.get(playerId);
         if (!p || this.phase !== 'playing') return;
-        p.role = role;
-        p.infectedAt = role === 'infected' ? now : 0;
-        if (role === 'doctor' && p.healsLeft === 0) p.healsLeft = this.settings.healCharges;
+        if (!['infected', 'innocent', 'doctor'].includes(role) || p.role === role || p.status !== 'active') return;
+        // Trade roles with a demo/bot player who has the one you want, so the round keeps its
+        // infected and doctor (switching the last infected to innocent would otherwise end it).
+        const old = p.role;
+        const partner = this.active().find((o) => o !== p && o.isBot && o.role === role);
+        const setRole = (who: Player, r: Role) => {
+            who.role = r;
+            who.infectedAt = r === 'infected' ? now : 0;
+            if (r === 'doctor' && who.healsLeft === 0) who.healsLeft = this.settings.healCharges;
+            this.cancelHoldsInvolving(who.id, 'Role changed');
+        };
+        if (partner && old) setRole(partner, old);
+        setRole(p, role);
+        p.roleAcked = true; // a test switch skips the "your secret role" card
         this.dirty = true;
+        this.checkVictory(now);
     }
 
     /** Bots move around randomly and bite/heal whoever is HOT, so one phone can play a round. */
@@ -1396,6 +1446,8 @@ export class Room {
             infectionMarks: this.marksFor(now),
             tally: this.phase === 'playing' ? this.tally() : null,
             pingEveryMs: this.pingEveryMs(),
+            testTools: this.hasTestTools(),
+            ...(playerId === this.hostId && this.hasTestTools() ? { testRole: this.testRole } : {}),
             feed: inGame ? this.feed.slice(-5) : [],
         };
     }

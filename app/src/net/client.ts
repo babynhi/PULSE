@@ -199,7 +199,7 @@ export function send<E extends keyof ClientToServer>(ev: E, ...args: Parameters<
     (getSocket().emit as any)(ev, ...args);
 }
 
-export function emitAck(ev: 'game:start' | 'action:start' | 'lobby:settings' | 'lobby:addDemo' | 'lobby:icon', payload?: any): Promise<string | null> {
+export function emitAck(ev: 'game:start' | 'action:start' | 'lobby:settings' | 'lobby:addDemo' | 'lobby:icon' | 'lobby:testRole', payload?: any): Promise<string | null> {
     return withTimeout<any>((cb) =>
         payload === undefined ? (getSocket().emit as any)(ev, cb) : (getSocket().emit as any)(ev, payload, cb),
     15000).then(

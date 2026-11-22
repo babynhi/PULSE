@@ -215,3 +215,51 @@ test('demo positions respect role visibility; demo rooms ping every 10 s, 5 s la
     assert.deepEqual(w.allies.map((a) => a.name), [bots[0].name]);
     assert.ok(distanceMeters(w.allies[0], pos(bots[0])) < 0.01, 'ally pin is the live position');
 });
+
+test('test my role: host picks a starting role, demo rooms only, roles stay complete', () => {
+    for (const want of ['infected', 'innocent', 'doctor'] as Role[]) {
+        for (let i = 0; i < 6; i++) { // shuffles are random: try a few times
+            const room = new Room('TEST', undefined, false);
+            room.join('h', 'Host', t0);
+            assert.throws(() => room.setTestRole('h', want), /demo/, 'not without demo players');
+            room.addDemoPlayers('h', t0);
+            room.setTestRole('h', want);
+            assert.equal(room.viewFor('h', t0).testRole, want, 'host sees their choice');
+            room.updateSettings('h', { disperseSec: 0 });
+            room.setTestRole('h', want); // settings changes don't clear it
+            room.start('h', t0);
+            const ps = [...room.players.values()];
+            assert.equal(room.players.get('h')!.role, want);
+            assert.equal(ps.filter((p) => p.role === 'infected').length, 1, 'still exactly one infected');
+            assert.equal(ps.filter((p) => p.role === 'doctor').length, 1, 'still one doctor');
+            assert.ok(ps.every((p) => p.startRole === p.role));
+        }
+    }
+});
+
+test('switch role mid-round: demo rooms only, no role card', () => {
+    const room = new Room('SW', undefined, false);
+    room.join('h', 'Host', t0);
+    room.join('x', 'X', t0);
+    room.join('y', 'Y', t0);
+    room.updateSettings('h', { disperseSec: 0 });
+    room.setReady('x', true); room.setReady('y', true);
+    room.start('h', t0);
+    assert.throws(() => room.debugSetRole('h', 'infected', t0), /Debug/, 'real games: no switching');
+
+    const { room: demo, host, now } = setup({ roles: ['innocent', 'infected', 'innocent', 'doctor'] });
+    assert.equal(demo.viewFor('p0', now()).testTools, true);
+    demo.debugSetRole('p0', 'doctor', now());
+    assert.equal(host.role, 'doctor');
+    assert.equal(host.roleAcked, true);
+    assert.equal(host.healsLeft, 2);
+    demo.debugSetRole('p0', 'infected', now());
+    assert.equal(host.role, 'infected');
+    assert.equal(demo.viewFor('p0', now()).me!.role, 'infected');
+    // switching away from being the only infected hands it to a demo player: the round goes on
+    demo.debugSetRole('p0', 'innocent', now());
+    assert.equal(host.role, 'innocent');
+    assert.equal(demo.phase, 'playing');
+    const roles = [...demo.players.values()].map((p) => p.role);
+    assert.ok(roles.includes('infected') && roles.includes('doctor'), roles.join());
+});

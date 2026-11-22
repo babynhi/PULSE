@@ -296,6 +296,13 @@ export interface RoomView {
     tally?: { infectedLeft: number; survivorsLeft: number } | null;
     /** Recent anonymous kill-feed lines (newest last). */
     feed?: FeedItem[];
+    /**
+     * Host only, demo rooms only: the role the host asked to start with ("Test my role").
+     * null = random. Undefined for everyone else.
+     */
+    testRole?: Role | null;
+    /** true when this room has demo players: test tools (Test my role, switch role) are allowed. */
+    testTools?: boolean;
     /** How often pings arrive in this room (PING_INTERVAL_MS, or faster with demo players). */
     pingEveryMs?: number;
 }
@@ -345,6 +352,8 @@ export interface ClientToServer {
     'room:create': (p: { playerId: string; name: string; icon?: string }, ack: Ack<{ code: string }>) => void;
     /** If the icon is taken (or missing) the server gives the player the first free one. */
     'room:join': (p: { playerId: string; name: string; code: string; icon?: string }, ack: Ack<{ code: string }>) => void;
+    /** Host only, demo rooms only: start the next round as this role (null = random). */
+    'lobby:testRole': (p: { role: Role | null }, ack?: Ack) => void;
     /** Change your icon in the lobby. Fails if someone else has it. */
     'lobby:icon': (p: { icon: string }, ack?: Ack) => void;
     'room:leave': (ack?: () => void) => void;
@@ -367,6 +376,7 @@ export interface ClientToServer {
     'debug:setProx': (p: { targetBleId: number; zone: Zone | null }) => void;
     'debug:skip': () => void;
     'debug:botRoam': (p: { on: boolean }) => void;
+    /** Switch your own role mid-round. Allowed on debug servers and in rooms with demo players. */
     'debug:setRole': (p: { role: Role }) => void;
 }
 
