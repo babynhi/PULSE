@@ -12,6 +12,7 @@
       "bundleIdentifier": "com.babynhi.pulse"
     },
     "plugins": [
+      "./plugins/withGoogleMaps",
       [
         "expo-location",
         {

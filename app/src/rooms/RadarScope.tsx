@@ -1,26 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { AccessibilityInfo, Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
 import type { RoomView, Zone } from '../../../shared/protocol';
-import { party } from '../ui/fieldDay';
 import type { PlayerPosition } from '../net/useLocReporter';
+import { mapColors, radarBands } from './radarStyle';
 
-export type RadarProps = { room: RoomView; position: PlayerPosition | null; now: number; band: Zone | 'NONE' };
-
-const ZONE_STYLE: Record<Zone | 'NONE', { color: string; period: number; glow: number }> = {
-  HOT: { color: party.alert, period: 700, glow: 1 },
-  WARM: { color: party.orange, period: 1300, glow: 0.7 },
-  COLD: { color: party.ink, period: 2600, glow: 0.35 },
-  NONE: { color: party.ink, period: 2600, glow: 0.35 },
-};
+type RadarRoom = Pick<RoomView, 'zone' | 'allies' | 'pings' | 'pingAt'> & { me: Pick<NonNullable<RoomView['me']>, 'role'> | null };
+export type RadarProps = { room: RadarRoom; position: PlayerPosition | null; now: number; band: Zone | 'NONE'; demoFallback?: ReactNode };
 
 type BeamAnim = { rotate: Animated.Value; opacity: Animated.Value };
 const BEAM = 88;
 
 /** Concentric glowing rings + a rotating sweep around the player. */
 export function RadarScope({ zone, size, tint, beam }: { zone: Zone | 'NONE'; size: number; tint?: string; beam?: BeamAnim }) {
-  const base = ZONE_STYLE[zone];
+  const base = radarBands[zone];
   const z = tint && (zone === 'COLD' || zone === 'NONE') ? { ...base, color: tint } : base;
-  const me = tint ?? party.ink;
+  const me = tint ?? z.color;
   const [reduceMotion, setReduceMotion] = useState(true);
   useEffect(() => {
     let mounted = true;
@@ -101,39 +95,35 @@ export function RadarScope({ zone, size, tint, beam }: { zone: Zone | 'NONE'; si
       )}
       {/* the player */}
       <View style={{
-        width: 14, height: 14, borderRadius: 7, backgroundColor: party.paper, borderWidth: 3, borderColor: me,
+        width: 14, height: 14, borderRadius: 7, backgroundColor: mapColors.white, borderWidth: 3, borderColor: me,
         shadowColor: me, shadowOpacity: 1, shadowRadius: 10, shadowOffset: { width: 0, height: 0 },
       }} />
-      <Text style={[styles.self, { top: size / 2 + 10 }]}>You</Text>
     </View>
   );
 }
 
-const signalLabels = { HOT: 'Very close signal', WARM: 'Nearby signal', COLD: 'Distant signal', NONE: 'No nearby signal' };
-
 export function SignalLabel({ band }: { band: RadarProps['band'] }) {
+  const signal = radarBands[band];
   return <View pointerEvents="none" style={styles.readout}>
-    <View style={[styles.light, { backgroundColor: band === 'NONE' ? party.panel : ZONE_STYLE[band].color }]} />
-    <Text style={styles.caption}>{signalLabels[band]}</Text>
+    <Text style={[styles.caption, { color: band === 'HOT' || band === 'WARM' ? signal.color : mapColors.text }]}>{signal.text}</Text>
   </View>;
 }
 
 /** Bluetooth estimates closeness without a GPS fix or a bearing to another player. */
-export function ProximityRadar({ band }: { band: RadarProps['band'] }) {
+export function ProximityRadar({ band, tint, message = 'Location unavailable · Proximity only' }: {
+  band: RadarProps['band']; tint?: string; message?: string;
+}) {
   return <View style={styles.proximity}>
-    <RadarScope zone={band} size={132} />
+    <RadarScope zone={band} size={132} tint={tint} />
     <SignalLabel band={band} />
-    <Text style={styles.location}>Location unavailable · Proximity only</Text>
+    <Text style={styles.location}>{message}</Text>
   </View>;
 }
 
 const styles = StyleSheet.create({
-  proximity: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: party.sky },
-  readout: { position: 'absolute', top: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingVertical: 3, paddingHorizontal: 8, borderWidth: 1, borderColor: party.ink, borderRadius: 5, backgroundColor: party.panel },
-  light: { width: 9, height: 9, borderRadius: 5, borderWidth: 1, borderColor: party.ink },
-  caption: { color: party.ink, fontSize: 13, fontWeight: '800' },
-  self: { position: 'absolute', paddingHorizontal: 4, borderRadius: 3, backgroundColor: party.panel, color: party.ink,
-    fontSize: 11, fontWeight: '800' },
-  location: { position: 'absolute', bottom: 6, alignSelf: 'center', color: party.ink, fontSize: 13, fontWeight: '600' },
+  proximity: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: mapColors.background },
+  readout: { position: 'absolute', left: 16, right: 16, bottom: 24, alignItems: 'center' },
+  caption: { fontSize: 24, fontWeight: '900', textAlign: 'center', textShadowColor: 'rgba(0,0,0,0.9)',
+    textShadowRadius: 8, textShadowOffset: { width: 0, height: 1 } },
+  location: { position: 'absolute', top: 8, alignSelf: 'center', color: mapColors.text, fontSize: 13 },
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BackHandler, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Modal, StyleSheet, Text, View } from 'react-native';
 import { router, Stack } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import type { ActionProgress, LatLng, RoomView, Zone } from '../../../shared/protocol';
@@ -10,24 +10,19 @@ import { Dispersal } from '../rooms/Dispersal';
 import { LiveRound } from '../rooms/LiveRound';
 import { LiveRecap } from '../rooms/Recap';
 import { MapWithRadar } from '../rooms/MapRadar';
-import { FieldChoice, FieldDisclosure, fieldStyles, MenuItem, party } from '../ui/Menu';
+import { HeaderAction } from '../ui/HeaderAction';
+import { FieldChoice, fieldStyles, MenuItem, party } from '../ui/Menu';
 
 function RoundMap({ room, position, band }: { room: RoomView; position: LatLng | null; band: Zone | 'NONE' }) {
-  const [open, setOpen] = useState(false);
   const now = useServerNow(500);
   const zone = room.zone;
   const grace = room.me?.graceEndsAt;
   const outside = grace != null;
-  const shrink = zone?.shrinksAt;
-  const shrinkSecs = shrink == null ? null : Math.max(0, Math.ceil((shrink - now) / 1000));
   const returnSecs = grace == null ? null : Math.max(0, Math.ceil((grace - now) / 1000));
   const distance = zone && position ? Math.max(0, Math.round(distanceM(position, zone.center) - zone.radiusM)) : null;
   useEffect(() => {
     if (band === 'HOT') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
   }, [band]);
-  const status = !room.settings.zoneEnabled ? 'Open play' : !zone ? 'Waiting for the first GPS fix' :
-    shrinkSecs == null ? 'Final safe zone' : 'Safe zone shrinks in ' + Math.floor(shrinkSecs / 60) + ':' + String(shrinkSecs % 60).padStart(2, '0');
-
   useEffect(() => {
     if (returnSecs != null) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
   }, [returnSecs]);
@@ -38,13 +33,13 @@ function RoundMap({ room, position, band }: { room: RoomView; position: LatLng |
     if (room.pingAt) Haptics.selectionAsync().catch(() => {});
   }, [room.pingAt]);
 
-  return <View style={[fieldStyles.panel, styles.mapPanel, (outside || zone?.warning) && styles.warning]}>
-    {outside && <View accessibilityRole="alert">
-      <Text style={fieldStyles.heading}>Return to the safe zone</Text>
-      <Text style={fieldStyles.body}>{returnSecs} sec left{distance == null ? '' : ' · ' + distance + ' m to the boundary'}</Text>
-    </View>}
-    <FieldDisclosure label="Map" summary={status} expanded={open} onPress={() => setOpen(!open)} />
-    {open && <View style={styles.map}><MapWithRadar room={room} position={position} now={now} band={band} /></View>}
+  return <View style={styles.mapPanel}>
+    {(outside || zone?.warning) && <Text accessibilityRole="alert" style={[fieldStyles.error, styles.boundary]}>
+      {outside ? 'Return to the safe zone · ' + returnSecs + 's' + (distance == null ? '' : ' · ' + distance + ' m to boundary') : 'Zone shrinking soon'}
+    </Text>}
+    <View style={styles.mapPanel}>
+      <MapWithRadar room={room} position={position} now={now} band={band} />
+    </View>
   </View>;
 }
 
@@ -56,22 +51,23 @@ function distanceM(a: LatLng, b: LatLng) {
 }
 
 export default function Round() {
-  const { view, connected } = useGameStore();
+  const { view, connected, clockOffset } = useGameStore();
   const [bleStatus, setBleStatus] = useState('');
   const updateStatus = useCallback((message: string, healthy?: boolean) => setBleStatus(healthy ? '' : message), []);
   const heard = useProxReporter(updateStatus);
   const tracking = connected && view?.me?.status === 'active' && (view.phase === 'countdown' || view.phase === 'playing');
   const position = useLocReporter(tracking);
   const [progress, setProgress] = useState<ActionProgress | null>(null);
-  const [feedback, setFeedback] = useState('');
+  const [feedback, setFeedback] = useState<{ text: string; informational: boolean } | null>(null);
   const [leaving, setLeaving] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const message = useCallback((text: string) => {
+  const message = useCallback((text: string, informational = false) => {
     clearTimeout(timer.current);
-    setFeedback(text);
-    if (text) timer.current = setTimeout(() => setFeedback(''), 4000);
+    setFeedback(text ? { text, informational } : null);
+    if (text) timer.current = setTimeout(() => setFeedback(null), 4000);
   }, []);
   useEffect(() => () => clearTimeout(timer.current), []);
+  const boundaryAlert = view?.me?.graceEndsAt != null || !!view?.zone?.warning;
   const phase = view?.phase;
   useEffect(() => {
     if (!phase) router.replace('/');
@@ -82,7 +78,7 @@ export default function Round() {
     return () => sub.remove();
   }, []);
   useGameEvent('notice', useCallback((notice) => {
-    message(notice.text);
+    message(notice.text, notice.kind === 'info');
     const danger = notice.kind === 'youWereInfected' || notice.kind === 'eliminated';
     Haptics.notificationAsync(danger ? Haptics.NotificationFeedbackType.Warning : Haptics.NotificationFeedbackType.Success).catch(() => {});
   }, [message]));
@@ -92,6 +88,8 @@ export default function Round() {
     if (!event.ok) message(event.reason === 'Released' ? 'Released early. Try holding again.' : event.reason ?? 'Action interrupted.');
   }, [message]));
 
+  // A live boundary warning supersedes its one-off notice, including after the player returns.
+  if (boundaryAlert && feedback?.informational) setFeedback(null);
   if (!view || phase === 'lobby') return null;
   const radar = view.radar.map(entry => ({ ...entry, zone: entry.zone ?? view.debugProx[entry.bleId] ?? heard[entry.bleId] }));
   const opponents = radar.filter(entry => !entry.ally).map(entry => entry.zone);
@@ -99,13 +97,13 @@ export default function Round() {
   const title = phase === 'ended' ? 'Round recap' : phase === 'countdown' ? 'Dispersal' : 'Round';
   return <View style={fieldStyles.page}>
     <Stack.Screen options={{ title, headerShown: true, headerBackVisible: false, gestureEnabled: false,
-      headerRight: () => <Pressable accessibilityRole="button" accessibilityLabel="Leave game" style={styles.leave}
-        onPress={() => setLeaving(true)}><Text style={fieldStyles.label}>Leave</Text></Pressable> }} />
+      headerLeft: () => <HeaderAction label="Leave" accessibilityLabel="Leave game" onPress={() => setLeaving(true)} /> }} />
     {!connected ? <View style={fieldStyles.content}><Text accessibilityRole="alert" style={fieldStyles.heading}>Reconnecting to the room…</Text></View>
       : phase === 'countdown' ? <Dispersal room={view} bluetoothStatus={bleStatus} />
       : phase === 'ended' && view.result ? <LiveRecap result={view.result} name={view.players.find(p => p.id === view.youId)?.name}
           onReplay={() => send('game:playAgain')} />
-      : phase === 'playing' ? <LiveRound room={view} radar={radar} bluetoothStatus={bleStatus} feedback={feedback} actionProgress={progress}
+      : phase === 'playing' ? <LiveRound room={view} clockOffset={clockOffset} radar={radar} bluetoothStatus={bleStatus}
+          feedback={feedback?.text ?? ''} actionProgress={progress}
           onRoleAck={() => { message(''); send('game:roleAck'); }}
           onCancelAction={() => send('action:cancel')}
           onStartAction={async id => { const error = await emitAck('action:start', { targetBleId: id }); if (error) throw new Error(error); }}
@@ -122,10 +120,8 @@ export default function Round() {
 }
 
 const styles = StyleSheet.create({
-  mapPanel: { paddingVertical: 6 },
-  map: { height: 248, borderRadius: 8, overflow: 'hidden', backgroundColor: party.panel },
-  warning: { borderColor: party.alert, borderWidth: 2, paddingVertical: 12 },
-  leave: { minWidth: 48, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  mapPanel: { flex: 1, minHeight: 0, overflow: 'hidden', backgroundColor: party.panel },
+  boundary: { paddingHorizontal: 12, paddingVertical: 6, borderLeftWidth: 4, borderColor: party.alert },
   backdrop: { flex: 1, padding: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0008' },
   dialog: { width: '100%', maxWidth: 400 },
 });
