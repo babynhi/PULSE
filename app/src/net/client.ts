@@ -38,6 +38,8 @@ interface Store {
     clockOffset: number;
     name: string;
     code: string | null;
+    /** Why we were dropped from a room (kicked, room gone); shown on the home screen. */
+    lastNotice: string;
 }
 
 const store: Store = {
@@ -48,6 +50,7 @@ const store: Store = {
     clockOffset: 0,
     name: '',
     code: null,
+    lastNotice: '',
 };
 let snapshot = { ...store };
 const listeners = new Set<() => void>();
@@ -71,7 +74,15 @@ export function getSocket(): GameSocket {
         store.connected = true;
         emit();
         // Auto-rejoin after a drop: the server restores our role and state.
-        if (store.code) s.emit('room:join', { playerId, name: store.name, code: store.code }, () => { });
+        if (store.code) s.emit('room:join', { playerId, name: store.name, code: store.code }, (res: any) => {
+            // Room gone (server restarted) or game started while we were away: don't sit in a dead room.
+            if (!res?.ok) {
+                store.code = null;
+                store.view = null;
+                store.lastNotice = `You lost the room: ${res?.error ?? 'unknown error'}`;
+                emit();
+            }
+        });
     });
     s.on('connect_error', (e) => console.warn('PULSE server connect error:', e.message));
     s.on('disconnect', () => {
@@ -80,6 +91,8 @@ export function getSocket(): GameSocket {
     });
     s.on('room:state', (v) => {
         store.view = v;
+        // Take the code from the server too, so auto-rejoin works even if the create/join ack was late.
+        store.code = v.code;
         store.clockOffset = v.serverNow - Date.now();
         emit();
     });
@@ -87,6 +100,7 @@ export function getSocket(): GameSocket {
         if (n.kind === 'kicked') {
             store.code = null;
             store.view = null;
+            store.lastNotice = n.text;
             emit();
         }
         eventListeners.notice.forEach((l) => l(n));
@@ -146,7 +160,10 @@ function withTimeout<T>(fn: (cb: (r: T) => void) => void, ms = 5000): Promise<T>
 
 export async function hostGame(name: string) {
     const s = getSocket();
-    const res = await withTimeout<any>((cb) => s.emit('room:create', { playerId, name }, cb));
+    store.name = name;
+    store.lastNotice = '';
+    // Long timeout: a sleeping Render server can take ~60 s to wake up.
+    const res = await withTimeout<any>((cb) => s.emit('room:create', { playerId, name }, cb), 75000);
     if (!res.ok) throw new Error(res.error);
     store.name = name;
     store.code = res.code;
@@ -155,10 +172,17 @@ export async function hostGame(name: string) {
 
 export async function joinGame(name: string, code: string) {
     const s = getSocket();
-    const res = await withTimeout<any>((cb) => s.emit('room:join', { playerId, name, code }, cb));
+    store.name = name;
+    store.lastNotice = '';
+    const res = await withTimeout<any>((cb) => s.emit('room:join', { playerId, name, code }, cb), 75000);
     if (!res.ok) throw new Error(res.error);
     store.name = name;
     store.code = res.code;
+    emit();
+}
+
+export function clearLastNotice() {
+    store.lastNotice = '';
     emit();
 }
 
@@ -177,7 +201,7 @@ export function send<E extends keyof ClientToServer>(ev: E, ...args: Parameters<
 export function emitAck(ev: 'game:start' | 'action:start' | 'lobby:settings', payload?: any): Promise<string | null> {
     return withTimeout<any>((cb) =>
         payload === undefined ? (getSocket().emit as any)(ev, cb) : (getSocket().emit as any)(ev, payload, cb),
-    ).then(
+    15000).then(
         (r) => (r.ok ? null : r.error),
         (e) => e.message,
     );

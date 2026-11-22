@@ -11,11 +11,13 @@ export default function Navigation() {
         headerTintColor: '#F2F5ED',
         contentStyle: { backgroundColor: '#101518' },
       }}>
-        <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="index" options={{ headerShown: false, title: 'Home' }} />
         <Stack.Screen name="tutorial" options={{ title: 'How to Play' }} />
         <Stack.Screen name="ble-lab" options={{ title: 'Game and Bluetooth Labs' }} />
         <Stack.Screen name="host" options={{ title: 'Host Game' }} />
         <Stack.Screen name="join" options={{ title: 'Join Game' }} />
+        <Stack.Screen name="room" options={{ title: 'Lobby', headerBackVisible: false, gestureEnabled: false }} />
+        <Stack.Screen name="round" options={{ headerShown: false, gestureEnabled: false }} />
         <Stack.Screen name="demo" options={{ title: 'Demo round' }} />
         <Stack.Screen name="game-settings" options={{ title: 'Game settings' }} />
       </Stack>

@@ -32,8 +32,11 @@ export interface Settings {
     immunitySec: number;
     reconnectSec: number;
     maxPlayers: number;
-    /** Phase 2. Stored and shown but not enforced yet. */
+    /** Shrinking GPS safe zone. false = house-party mode (no zone). */
     zoneEnabled: boolean;
+    zoneStartRadiusM: number;
+    zoneShrinkSec: number;
+    zoneGraceSec: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -47,7 +50,10 @@ export const DEFAULT_SETTINGS: Settings = {
     immunitySec: 10,
     reconnectSec: 30,
     maxPlayers: 20,
-    zoneEnabled: false,
+    zoneEnabled: true,
+    zoneStartRadiusM: 150,
+    zoneShrinkSec: 180,
+    zoneGraceSec: 10,
 };
 
 /** Min/max the server clamps each numeric setting to. */
@@ -61,7 +67,38 @@ export const SETTING_LIMITS: Record<string, [number, number]> = {
     immunitySec: [0, 120],
     reconnectSec: [5, 300],
     maxPlayers: [3, 50],
+    zoneStartRadiusM: [30, 2000],
+    zoneShrinkSec: [30, 900],
+    zoneGraceSec: [3, 60],
 };
+
+/** Zone shrink rules (not host-configurable). */
+export const ZONE_SHRINK_FACTOR = 0.7;
+export const ZONE_MIN_RADIUS_M = 20;
+export const ZONE_WARNING_MS = 30_000;
+/** Everyone's fuzzed position is pinged to everyone this often. */
+export const PING_INTERVAL_MS = 30_000;
+
+export interface LatLng {
+    lat: number;
+    lng: number;
+}
+
+export interface ZoneView {
+    center: LatLng;
+    radiusM: number;
+    /** radius after the next shrink (null when already at minimum) */
+    nextRadiusM: number | null;
+    /** epoch ms of the next shrink, null when it won't shrink again */
+    shrinksAt: number | null;
+    /** true during the last ZONE_WARNING_MS before a shrink */
+    warning: boolean;
+}
+
+export interface AllyPos extends LatLng {
+    id: string;
+    name: string;
+}
 
 export const MIN_PLAYERS = 3;
 
@@ -88,6 +125,10 @@ export interface MyState {
     /** epoch ms; cured players can't be bitten before this. */
     immuneUntil: number;
     status: PlayerStatus;
+    /** epoch ms when this player left the zone (null = inside or unknown) */
+    outsideZoneSince: number | null;
+    /** epoch ms when the player is eliminated if still outside */
+    graceEndsAt: number | null;
 }
 
 /** Registered devices this player may see on radar. */
@@ -152,6 +193,13 @@ export interface RoomView {
     debugProx: Record<number, Zone>;
     debugEnabled: boolean;
     result: GameResult | null;
+    /** Current safe zone, null when off / not started / no GPS. */
+    zone: ZoneView | null;
+    /** Live positions of fellow infected. Only ever sent to infected players. */
+    allies: AllyPos[];
+    /** Last auto-ping: fuzzed positions of every other active player. */
+    pings: LatLng[];
+    pingAt: number | null;
 }
 
 export type NoticeKind =
@@ -207,6 +255,8 @@ export interface ClientToServer {
     'game:roleAck': () => void;
     'game:playAgain': () => void;
     'prox:report': (p: { readings: ProxReading[] }) => void;
+    /** My GPS position, sent every few seconds during the round. */
+    'loc:report': (p: { lat: number; lng: number; acc?: number }) => void;
     'action:start': (p: { targetBleId: number }, ack: Ack) => void;
     'action:cancel': () => void;
     // Debug panel: test without real Bluetooth (bots, fake distances, skip timer)

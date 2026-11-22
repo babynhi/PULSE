@@ -12,6 +12,12 @@
       "bundleIdentifier": "com.babynhi.pulse"
     },
     "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "PULSE uses your location to show the safe zone during a round."
+        }
+      ],
       "expo-router",
       [
         "react-native-ble-plx",
