@@ -9,7 +9,8 @@ import { Circle, Marker, Polygon, Polyline } from 'react-native-maps';
 import { Text, View } from 'react-native';
 import { INFECTION_MARK_MS, type AllyPos, type InfectionMark, type LatLng, type PingDot, type ZoneView } from '../../../shared/protocol';
 import { mapColors } from './radarStyle';
-import { agoLabel, allyInitials, glideAt, markOpacity, matchPings, pingOpacity, zoneRing, type Keyed } from './mapGeometry';
+import { agoLabel, glideAt, markOpacity, pingOpacity, zoneRing, type Keyed } from './mapGeometry';
+import { PlayerIcon } from '../ui/PlayerIcon';
 
 const PULSE_MS = 1600;
 const FRAME_MS = 50;
@@ -78,17 +79,14 @@ export function ZoneOverlay({ zone, flash }: { zone: ZoneView; flash: boolean })
 export function AllyPins({ allies }: { allies: AllyPos[] }) {
   // Ally positions arrive about once a second: glide over that second so pins walk instead of jump.
   const { at, points } = useGlide(allies.map(a => ({ key: a.id, lat: a.lat, lng: a.lng })), 1000);
+  const byId = new Map(allies.map(a => [a.id, a]));
   return (
     <>
       {points.map((p, i) => <PulseRing key={'ring-' + p.key} at={at} center={p} rgb="230,57,70" />)}
-      {points.map((p, i) => (
-        <Marker key={p.key} coordinate={toMap(p)} anchor={{ x: 0.5, y: 0.5 }} title={allies[i].name} zIndex={2}>
-          <View style={{
-            width: 30, height: 30, borderRadius: 15, backgroundColor: mapColors.infected, borderWidth: 2, borderColor: mapColors.white,
-            alignItems: 'center', justifyContent: 'center',
-            shadowColor: mapColors.infected, shadowOpacity: 0.9, shadowRadius: 8, shadowOffset: { width: 0, height: 0 },
-          }}>
-            <Text style={{ color: mapColors.white, fontSize: 12, fontWeight: '900' }}>{allyInitials(allies[i].name)}</Text>
+      {points.map(p => (
+        <Marker key={p.key} coordinate={toMap(p)} anchor={{ x: 0.5, y: 0.5 }} title={byId.get(p.key)?.name} zIndex={2}>
+          <View style={{ shadowColor: mapColors.infected, shadowOpacity: 0.9, shadowRadius: 8, shadowOffset: { width: 0, height: 0 } }}>
+            <PlayerIcon icon={byId.get(p.key)?.icon} size={30} ring={mapColors.infected} ringWidth={3} />
           </View>
         </Marker>
       ))}
@@ -102,15 +100,9 @@ export function AllyPins({ allies }: { allies: AllyPos[] }) {
  */
 export function PingDots({ pings, pingAt, now, fadeMs = 40_000 }: { pings: PingDot[]; pingAt: number | null; now: number; fadeMs?: number }) {
   // Pair each new ping with the dot it most likely belongs to, so dots glide instead of jumping.
-  // Re-pair on a new ping, and also when someone drops off it (bitten, eliminated) between pings.
-  const sig = pingAt + ':' + pings.map(p => p.lat + ',' + p.lng).join('|');
-  const [paired, setPaired] = useState<{ sig: string; dots: Keyed[]; seq: number }>({ sig: '', dots: [], seq: 0 });
-  let dots = paired.dots;
-  if (paired.sig !== sig) {
-    let seq = paired.seq;
-    dots = matchPings(paired.dots, pings, () => 'ping-' + seq++);
-    setPaired({ sig, dots, seq });
-  }
+  // Pings carry each survivor's icon, so a dot glides from its last spot to its new one by icon.
+  const dots: (Keyed & { icon: string })[] = pings.map(p => ({ key: 'ping-' + p.icon, icon: p.icon, lat: p.lat, lng: p.lng }));
+  const icons = new Map(dots.map(d => [d.key, d.icon]));
   const opacity = pingOpacity(pingAt, now, fadeMs);
   const { at, points } = useGlide(opacity > 0 ? dots : [], 1500);
   if (opacity <= 0 || !pings.length) return null;
@@ -121,9 +113,7 @@ export function PingDots({ pings, pingAt, now, fadeMs = 40_000 }: { pings: PingD
       {points.map(p => (
         <Marker key={p.key} coordinate={toMap(p)} anchor={{ x: 0.5, y: 0.3 }} opacity={Math.max(0.45, opacity)} title={'Survivor · ' + label} zIndex={2}>
           <View style={{ alignItems: 'center' }}>
-            <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: mapColors.pingHalo, borderWidth: 1, borderColor: mapColors.pingEdge, alignItems: 'center', justifyContent: 'center' }}>
-              <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: mapColors.pingCore, borderWidth: 1.5, borderColor: mapColors.white }} />
-            </View>
+            <PlayerIcon icon={icons.get(p.key)} size={28} ring={mapColors.amber} ringWidth={3} />
             <View style={{ marginTop: 2, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 8, backgroundColor: 'rgba(10,13,22,0.85)' }}>
               <Text style={{ color: mapColors.white, fontSize: 11, fontWeight: '800' }}>{label}</Text>
             </View>

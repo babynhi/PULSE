@@ -4,7 +4,8 @@ import { setStringAsync } from 'expo-clipboard';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect } from 'expo-router';
 import { Header } from 'expo-router/react-navigation';
-import { emitAck, leaveGame, send, useGameEvent, useGameStore } from '../net/client';
+import { changeIcon, emitAck, leaveGame, send, useGameEvent, useGameStore } from '../net/client';
+import { IconPicker } from '../ui/PlayerIcon';
 import { Lobby } from '../rooms/Lobby';
 import { RoomSettingsForm } from '../rooms/RoomSettingsForm';
 import { FieldChoice, fieldStyles, MenuItem } from '../ui/Menu';
@@ -12,7 +13,7 @@ import { fieldHeaderOptions, HeaderAction } from '../ui/HeaderAction';
 
 export default function Room() {
   const { view, connected } = useGameStore();
-  const [panel, setPanel] = useState<'settings' | 'players' | null>(null);
+  const [panel, setPanel] = useState<'settings' | 'players' | 'icon' | null>(null);
   const [playerId, setPlayerId] = useState('');
   const [message, setMessage] = useState('');
   const close = () => { setPanel(null); setPlayerId(''); };
@@ -33,11 +34,26 @@ export default function Room() {
       onReady={ready => { if (connected) send('lobby:ready', { ready }); }} readyDisabled={!connected}
       onLeave={leaveGame} onSettings={() => setPanel('settings')} onCopy={() => setStringAsync(view.code)}
       onManage={isHost && otherPlayers.length > 0 && connected ? () => setPanel('players') : undefined}
+      onChangeIcon={connected ? () => setPanel('icon') : undefined}
       onAddDemo={isHost && connected && view.players.length < view.settings.maxPlayers ? () => {
         emitAck('lobby:addDemo').then(error => { if (error) setMessage(error); });
       } : undefined}
       messages={[...view.startBlockers.filter(reason => !reason.startsWith('Waiting for ')), ...view.warnings]}
       error={connected ? message : 'Reconnecting to the room…'} />
+    {panel === 'icon' && <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
+      <SafeAreaProvider>
+        <SafeAreaView edges={['top']} style={fieldHeaderOptions.headerStyle}>
+          <Header {...fieldHeaderOptions} modal headerStatusBarHeight={0} title="Your icon"
+            headerLeft={() => <HeaderAction label="Close" accessibilityLabel="Close icon picker" onPress={close} />} />
+        </SafeAreaView>
+        <ScrollView style={fieldStyles.page} contentContainerStyle={fieldStyles.content}>
+          <Text style={fieldStyles.body}>Pick an icon nobody else in the room has. Greyed-out ones are taken.</Text>
+          <IconPicker value={view.players.find(p => p.id === view.youId)?.icon}
+            taken={view.players.filter(p => p.id !== view.youId).map(p => p.icon)}
+            onChange={icon => { changeIcon(icon).then(error => { if (error) setMessage(error); else close(); }); }} />
+        </ScrollView>
+      </SafeAreaProvider>
+    </Modal>}
     {(panel === 'settings' || manage) && <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
       <SafeAreaProvider>
         <SafeAreaView edges={['top']} style={fieldHeaderOptions.headerStyle}>

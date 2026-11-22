@@ -6,8 +6,9 @@ import type { PublicPlayer, Settings } from '../../../shared/protocol';
 import { FieldChoice, fieldStyles, MenuItem, MenuPaper, menuActionLayout, party, TrackStripe } from '../ui/Menu';
 import { formatDuration } from '../ui/formatDuration';
 import { HeaderAction } from '../ui/HeaderAction';
+import { PlayerIcon } from '../ui/PlayerIcon';
 
-type LobbyPlayer = Pick<PublicPlayer, 'id' | 'name' | 'isHost' | 'ready' | 'connected'> & Partial<Pick<PublicPlayer, 'isBot' | 'isDemo'>>;
+type LobbyPlayer = Pick<PublicPlayer, 'id' | 'name' | 'isHost' | 'ready' | 'connected'> & Partial<Pick<PublicPlayer, 'isBot' | 'isDemo' | 'icon'>>;
 
 interface LobbyProps {
   roomCode: string;
@@ -21,13 +22,15 @@ interface LobbyProps {
   onManage?: () => void;
   /** Host only: adds 3 simulated demo players. */
   onAddDemo?: () => void;
+  /** Opens the icon picker for your own icon. */
+  onChangeIcon?: () => void;
   readyDisabled?: boolean;
   messages?: string[];
   error?: string;
 }
 
 export function Lobby({ roomCode, youId, players, settings, onSettings, onReady, onCopy, onLeave,
-  onManage, onAddDemo, readyDisabled, messages, error }: LobbyProps) {
+  onManage, onAddDemo, onChangeIcon, readyDisabled, messages, error }: LobbyProps) {
   const { height } = useWindowDimensions();
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   useEffect(() => {
@@ -91,6 +94,12 @@ export function Lobby({ roomCode, youId, players, settings, onSettings, onReady,
               const identity = [player.id === youId && 'you', player.isHost && 'host', player.isDemo ? 'demo' : player.isBot && !/^bot/i.test(player.name) && 'bot'].filter(Boolean).join(', ');
               return (
                 <View key={player.id} style={[s.playerRow, compact && s.compactPlayerRow]}>
+                  {player.icon && (player.id === youId && onChangeIcon
+                    ? <Pressable accessibilityRole="button" accessibilityLabel="Change your icon" onPress={onChangeIcon} style={s.iconButton}>
+                        <PlayerIcon icon={player.icon} size={34} ring={party.orange} />
+                        <Text style={s.iconHint}>Change</Text>
+                      </Pressable>
+                    : <PlayerIcon icon={player.icon} size={34} />)}
                   <Text style={s.playerName}>{player.name}
                     {identity && <Text style={s.identity}>{` · ${identity}`}</Text>}
                   </Text>
@@ -136,9 +145,11 @@ const s = StyleSheet.create({
   timing: { flexGrow: 1 },
   roster: { ...fieldStyles.panel, gap: 0 },
   compactRoster: { paddingVertical: 10 },
-  playerRow: { ...fieldStyles.row, justifyContent: 'space-between', paddingVertical: 8 },
+  playerRow: { ...fieldStyles.row, justifyContent: 'space-between', alignItems: 'center', columnGap: 10, paddingVertical: 8 },
   compactPlayerRow: { paddingVertical: 4 },
-  playerName: { ...fieldStyles.body, flexShrink: 1, fontWeight: '900' },
+  playerName: { ...fieldStyles.body, flex: 1, flexShrink: 1, fontWeight: '900' },
+  iconButton: { alignItems: 'center', gap: 1 },
+  iconHint: { color: party.ink, fontSize: 10, fontWeight: '800' },
   identity: { ...fieldStyles.muted, fontWeight: '600' },
   ready: { color: party.ready },
   notReady: { color: party.alert },

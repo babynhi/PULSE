@@ -3,6 +3,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { getSocket, hostGame, joinGame, useGameStore } from '../net/client';
+import { PLAYER_ICONS } from '../../../shared/protocol';
+import { IconPicker, PlayerIcon } from '../ui/PlayerIcon';
 
 import { fieldStyles, menuActionLayout, MenuItem, MenuPaper, party, TrackStripe } from '../ui/Menu';
 
@@ -13,6 +15,8 @@ export function RoomEntryScreen({ mode }: { mode: 'host' | 'join' }) {
   const codeInput = useRef<React.ComponentRef<typeof TextInput>>(null);
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
+  // Start on a random icon so a group joining at once rarely collides.
+  const [icon, setIcon] = useState(() => PLAYER_ICONS[Math.floor(Math.random() * PLAYER_ICONS.length)]);
   const { view, connected } = useGameStore();
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
@@ -35,8 +39,8 @@ export function RoomEntryScreen({ mode }: { mode: 'host' | 'join' }) {
     setMissing(null);
     setPending(true);
     try {
-      if (showCode) await joinGame(playerName, roomCode);
-      else await hostGame(playerName);
+      if (showCode) await joinGame(playerName, roomCode, icon);
+      else await hostGame(playerName, icon);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not reach the game server.');
     } finally {
@@ -60,6 +64,14 @@ export function RoomEntryScreen({ mode }: { mode: 'host' | 'join' }) {
               returnKeyType={showCode ? 'next' : 'go'}
               onSubmitEditing={() => showCode ? codeInput.current?.focus() : submit()} />
             {missing === 'name' && <Text accessibilityRole="alert" style={entry.error}>Enter your player name.</Text>}
+          </View>
+          <View style={entry.field}>
+            <View style={entry.iconHead}>
+              <PlayerIcon icon={icon} size={44} ring={party.ink} />
+              <Text style={entry.label}>Profile icon</Text>
+            </View>
+            <Text style={fieldStyles.muted}>Everyone in a room gets a different one.{showCode ? ' If yours is taken you’ll get a free one, and you can change it in the lobby.' : ''}</Text>
+            <IconPicker value={icon} onChange={setIcon} disabled={pending} />
           </View>
           {showCode && <View style={entry.field}>
             <Text style={entry.label}>Room code</Text>
@@ -89,6 +101,7 @@ const entry = StyleSheet.create({
   form: { flexGrow: 1, width: '100%', maxWidth: 468, alignSelf: 'center',
     paddingHorizontal: menuActionLayout.inset, paddingTop: 24, paddingBottom: menuActionLayout.inset, gap: 20 },
   field: { gap: 6 },
+  iconHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   label: fieldStyles.label,
   input: { minHeight: 54, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 2,
     borderColor: party.ink, borderRadius: 8, color: party.ink, fontSize: 20 },

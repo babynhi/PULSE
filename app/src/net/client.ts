@@ -27,6 +27,8 @@ interface Store {
     /** serverNow - Date.now(), to correct timers for clock skew */
     clockOffset: number;
     name: string;
+    /** chosen profile icon (the room may hand out a different one if it was taken) */
+    icon: string;
     code: string | null;
     /** Why we were dropped from a room (kicked, room gone); shown on the home screen. */
     lastNotice: string;
@@ -39,6 +41,7 @@ const store: Store = {
     view: null,
     clockOffset: 0,
     name: '',
+    icon: '',
     code: null,
     lastNotice: '',
 };
@@ -64,7 +67,7 @@ export function getSocket(): GameSocket {
         store.connected = true;
         emit();
         // Auto-rejoin after a drop: the server restores our role and state.
-        if (store.code) s.emit('room:join', { playerId, name: store.name, code: store.code }, (res: any) => {
+        if (store.code) s.emit('room:join', { playerId, name: store.name, code: store.code, icon: store.icon }, (res: any) => {
             // Room gone (server restarted) or game started while we were away: don't sit in a dead room.
             if (!res?.ok) {
                 store.code = null;
@@ -148,27 +151,35 @@ function withTimeout<T>(fn: (cb: (r: T) => void) => void, ms = 5000): Promise<T>
     });
 }
 
-export async function hostGame(name: string) {
+export async function hostGame(name: string, icon?: string) {
     const s = getSocket();
     store.name = name;
+    store.icon = icon ?? '';
     store.lastNotice = '';
     // Long timeout: a sleeping Render server can take ~60 s to wake up.
-    const res = await withTimeout<any>((cb) => s.emit('room:create', { playerId, name }, cb), 75000);
+    const res = await withTimeout<any>((cb) => s.emit('room:create', { playerId, name, icon }, cb), 75000);
     if (!res.ok) throw new Error(res.error);
     store.name = name;
     store.code = res.code;
     emit();
 }
 
-export async function joinGame(name: string, code: string) {
+export async function joinGame(name: string, code: string, icon?: string) {
     const s = getSocket();
     store.name = name;
+    store.icon = icon ?? '';
     store.lastNotice = '';
-    const res = await withTimeout<any>((cb) => s.emit('room:join', { playerId, name, code }, cb), 75000);
+    const res = await withTimeout<any>((cb) => s.emit('room:join', { playerId, name, code, icon }, cb), 75000);
     if (!res.ok) throw new Error(res.error);
     store.name = name;
     store.code = res.code;
     emit();
+}
+
+/** Lobby: switch to another free icon. Resolves to an error message, or '' on success. */
+export async function changeIcon(icon: string) {
+    store.icon = icon;
+    return (await emitAck('lobby:icon', { icon })) ?? '';
 }
 
 export function clearLastNotice() {
@@ -188,7 +199,7 @@ export function send<E extends keyof ClientToServer>(ev: E, ...args: Parameters<
     (getSocket().emit as any)(ev, ...args);
 }
 
-export function emitAck(ev: 'game:start' | 'action:start' | 'lobby:settings' | 'lobby:addDemo', payload?: any): Promise<string | null> {
+export function emitAck(ev: 'game:start' | 'action:start' | 'lobby:settings' | 'lobby:addDemo' | 'lobby:icon', payload?: any): Promise<string | null> {
     return withTimeout<any>((cb) =>
         payload === undefined ? (getSocket().emit as any)(ev, cb) : (getSocket().emit as any)(ev, payload, cb),
     15000).then(

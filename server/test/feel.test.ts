@@ -67,6 +67,28 @@ test('danger: survivors get the closest infected proximity; infected never do', 
     assert.ok(['HOT', 'WARM', 'COLD', null].includes(room.viewFor(a.id, now()).me!.danger ?? null));
 });
 
+test('danger level: closer means stronger (0..1), COLD is none, infected never get it', () => {
+    const { room, one, all, now } = setup();
+    const inf = one('infected');
+    const [a] = all('innocent');
+    const level = () => room.viewFor(a.id, now()).me!.dangerLevel ?? null;
+    const hear = (zone: 'HOT' | 'WARM' | 'COLD', rssi: number) => room.reportProx(a.id, [{ bleId: inf.bleId, zone, rssi }], now());
+    hear('COLD', -92);
+    assert.equal(level(), null, 'COLD is no heartbeat');
+    hear('WARM', -84);
+    const warmFar = level()!;
+    hear('WARM', -70);
+    const warmNear = level()!;
+    hear('HOT', -62);
+    const hotFar = level()!;
+    hear('HOT', -46);
+    const hotNear = level()!;
+    assert.ok(warmFar > 0 && warmFar < warmNear && warmNear <= 0.5, `${warmFar} < ${warmNear}`);
+    assert.ok(hotFar >= 0.55 && hotFar < hotNear && hotNear <= 1, `${hotFar} < ${hotNear}`);
+    assert.equal(Math.round(hotNear * 20), hotNear * 20, 'coarse steps of 0.05');
+    assert.equal(room.viewFor(inf.id, now()).me!.dangerLevel, null, 'infected never get it');
+});
+
 test('kill feed: anonymous lines for infections and cures, with survivors left', () => {
     const { room, one, all, act, now } = setup();
     const inf = one('infected');
