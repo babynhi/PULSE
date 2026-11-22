@@ -5,9 +5,12 @@
 import { useEffect, useState } from 'react';
 import * as Location from 'expo-location';
 import { send } from './client';
+import type { LatLng } from '../../../shared/protocol';
 
-export function useLocReporter(active: boolean): { lat: number; lng: number } | null {
-  const [pos, setPos] = useState<{ lat: number; lng: number } | null>(null);
+export type PlayerPosition = LatLng & { speed?: number | null; course?: number | null };
+
+export function useLocReporter(active: boolean): PlayerPosition | null {
+  const [pos, setPos] = useState<PlayerPosition | null>(null);
   useEffect(() => {
     if (!active) return;
     let sub: Location.LocationSubscription | undefined;
@@ -20,9 +23,10 @@ export function useLocReporter(active: boolean): { lat: number; lng: number } | 
         sub = await Location.watchPositionAsync(
           { accuracy: Location.Accuracy.High, distanceInterval: 1, timeInterval: 2000 },
           (pos) => {
+            if (cancelled) return;
             last = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy ?? undefined };
             send('loc:report', last);
-            setPos({ lat: last.lat, lng: last.lng });
+            setPos({ lat: last.lat, lng: last.lng, speed: pos.coords.speed, course: pos.coords.heading });
           },
         );
         if (cancelled) sub.remove();
@@ -30,7 +34,7 @@ export function useLocReporter(active: boolean): { lat: number; lng: number } | 
     })();
     // Re-send even when standing still, so the server's fix never goes stale.
     const timer = setInterval(() => { if (last) send('loc:report', last); }, 3000);
-    return () => { cancelled = true; sub?.remove(); clearInterval(timer); };
+    return () => { cancelled = true; sub?.remove(); clearInterval(timer); setPos(null); };
   }, [active]);
-  return pos;
+  return active ? pos : null;
 }
