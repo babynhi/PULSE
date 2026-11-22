@@ -33,6 +33,7 @@ import {
     ZONE_WARNING_MS,
     PING_INTERVAL_MS,
     DEMO_PING_INTERVAL_MS,
+    PLAYER_ICONS,
     PING_DELAY_MS,
     DEMO_PING_DELAY_MS,
     HEAL_WINDOW_MS,
@@ -109,6 +110,8 @@ export const PROX_STALE_MS = 2000;
 export interface Player {
     id: string;
     name: string;
+    /** profile icon, unique in the room */
+    icon: string;
     isBot: boolean;
     connected: boolean;
     joinedAt: number;
@@ -205,7 +208,7 @@ export class Room {
     // ---------- membership ----------
 
     /** Adds a player, or reconnects an existing one with the same id. Returns the player. */
-    join(playerId: string, rawName: string, now: number, isBot = false): Player {
+    join(playerId: string, rawName: string, now: number, isBot = false, icon?: unknown): Player {
         const existing = this.players.get(playerId);
         if (existing) {
             existing.connected = true;
@@ -219,6 +222,7 @@ export class Room {
         const p: Player = {
             id: playerId,
             name,
+            icon: this.freeIcon(icon),
             isBot,
             connected: true,
             joinedAt: now,
@@ -240,6 +244,24 @@ export class Room {
         if (!this.hostId) this.hostId = playerId;
         this.dirty = true;
         return p;
+    }
+
+    /** The requested icon if it's a real one and nobody has it, else the first free icon. */
+    private freeIcon(wanted: unknown, except?: string): string {
+        const taken = new Set([...this.players.values()].filter((p) => p.id !== except).map((p) => p.icon));
+        if (typeof wanted === 'string' && (PLAYER_ICONS as readonly string[]).includes(wanted) && !taken.has(wanted)) return wanted;
+        return PLAYER_ICONS.find((i) => !taken.has(i)) ?? PLAYER_ICONS[0];
+    }
+
+    /** Lobby only: pick a different icon. */
+    setIcon(playerId: string, icon: unknown) {
+        const p = this.players.get(playerId);
+        if (!p) return;
+        if (this.phase !== 'lobby') throw new GameError('You can only change your icon in the lobby');
+        if (typeof icon !== 'string' || !(PLAYER_ICONS as readonly string[]).includes(icon)) throw new GameError('Unknown icon');
+        if ([...this.players.values()].some((o) => o.id !== playerId && o.icon === icon)) throw new GameError('Someone already has that icon');
+        p.icon = icon;
+        this.dirty = true;
     }
 
     private uniqueName(raw: string): string {
@@ -590,6 +612,7 @@ export class Room {
             standings: all
                 .map((p) => ({
                     name: p.name,
+                    icon: p.icon,
                     startRole: p.startRole!,
                     finalRole: p.role!,
                     status: p.status,
@@ -1214,6 +1237,46 @@ export class Room {
         return best;
     }
 
+    /**
+     * Survivors only: 0..1 closeness of the nearest infected (1 = touching), for a heartbeat that
+     * gets harder and faster the closer they are. GPS distance for demo players, else RSSI, else
+     * the proximity bucket. Rounded to 0.05 so it can't be used to pinpoint anyone. COLD = none.
+     */
+    dangerLevelFor(me: Player, now: number): number | null {
+        if (this.phase !== 'playing' || me.status !== 'active' || me.role === null || me.role === 'infected') return null;
+        let best = 0;
+        for (const p of this.active()) {
+            if (p === me || p.role !== 'infected') continue;
+            const zone = this.proximityBetween(me, p, now);
+            if (zone !== 'HOT' && zone !== 'WARM') continue;
+            best = Math.max(best, this.closeness(me, p, zone, now));
+        }
+        return best > 0 ? Math.round(best * 20) / 20 : null;
+    }
+
+    private closeness(a: Player, b: Player, zone: 'HOT' | 'WARM', now: number): number {
+        // WARM spans 0.05..0.5, HOT spans 0.55..1.
+        const [lo, hi] = zone === 'HOT' ? [0.55, 1] : [0.05, 0.5];
+        const within = (t: number) => lo + (hi - lo) * Math.max(0, Math.min(1, t));
+        if (!this.debugProx.get(pairKey(a.id, b.id)) && (a.demo || b.demo)) {
+            const fa = this.positions.get(a.id), fb = this.positions.get(b.id);
+            if (fa && fb) {
+                const d = distanceMeters(fa, fb);
+                return zone === 'HOT'
+                    ? within(1 - d / DEMO_HOT_M)
+                    : within(1 - (d - DEMO_HOT_M) / (DEMO_WARM_M - DEMO_HOT_M));
+            }
+        }
+        const ab = this.prox.get(a.id)?.get(b.bleId), ba = this.prox.get(b.id)?.get(a.bleId);
+        const rssis = [ab, ba].filter((r) => r && now - r.at <= PROX_STALE_MS && r.rssi < 0).map((r) => r!.rssi);
+        if (rssis.length) {
+            const rssi = Math.max(...rssis);
+            // roughly -85 dBm (edge of WARM) .. -45 dBm (phones touching)
+            return zone === 'HOT' ? within((rssi + 65) / 20) : within((rssi + 85) / 20);
+        }
+        return within(0.5);
+    }
+
     private zoneView(now: number): ZoneView {
         const z = this.zone!;
         return {
@@ -1232,7 +1295,7 @@ export class Room {
         for (const p of this.active()) {
             if (p.id === me.id || p.role !== 'infected') continue;
             const f = this.fix(p.id, now);
-            if (f) out.push({ id: p.id, name: p.name, lat: f.lat, lng: f.lng });
+            if (f) out.push({ id: p.id, name: p.name, icon: p.icon, lat: f.lat, lng: f.lng });
         }
         return out;
     }
@@ -1253,7 +1316,7 @@ export class Room {
             const p = this.players.get(id);
             // Only survivors are pinged: allies are already shown live.
             if (id === me!.id || p?.status !== 'active' || p.role === 'infected') continue;
-            out.push({ lat: l.lat, lng: l.lng, at: this.pingSampledAt });
+            out.push({ lat: l.lat, lng: l.lng, at: this.pingSampledAt, icon: p.icon });
         }
         return out;
     }
@@ -1290,6 +1353,7 @@ export class Room {
             players: [...this.players.values()].map((p) => ({
                 id: p.id,
                 name: p.name,
+                icon: p.icon,
                 isHost: p.id === this.hostId,
                 isBot: p.isBot,
                 isDemo: !!p.demo,
@@ -1316,6 +1380,7 @@ export class Room {
                         status: me.status,
                         outsideZoneSince: me.outsideZoneSince,
                         danger: this.dangerFor(me, now),
+                        dangerLevel: this.dangerLevelFor(me, now),
                         graceEndsAt:
                             me.outsideZoneSince !== null ? me.outsideZoneSince + this.settings.zoneGraceSec * 1000 : null,
                     }

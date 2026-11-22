@@ -68,7 +68,8 @@ export const SETTING_LIMITS: Record<string, [number, number]> = {
     healHoldMs: [500, 10000],
     immunitySec: [0, 120],
     reconnectSec: [5, 300],
-    maxPlayers: [3, 50],
+    /** capped by the number of profile icons (every player has a different one) */
+    maxPlayers: [3, 40],
     zoneStartRadiusM: [30, 2000],
     zoneShrinkSec: [30, 900],
     zoneGraceSec: [3, 60],
@@ -110,6 +111,8 @@ export interface ZoneView {
 export interface PingDot extends LatLng {
     /** epoch ms (server clock) when this position was true. The map labels it "30s ago". */
     at: number;
+    /** That survivor's profile icon. */
+    icon: string;
 }
 
 /** Approximate spot where someone was just infected. Anonymous, shown to everyone. */
@@ -122,15 +125,33 @@ export interface InfectionMark extends LatLng {
 export interface AllyPos extends LatLng {
     id: string;
     name: string;
+    icon: string;
 }
 
 export const MIN_PLAYERS = 3;
+
+/**
+ * Profile icons: 20 original black-and-white creature heads (app/assets/icons), each in a dark
+ * version (white creature on black) and a light version (black creature on white) = 40 icons.
+ * Each player in a room has a different one (the server enforces it). They show in the lobby, on
+ * fellow-infected pins and on survivor pings, so you can tell who is who.
+ */
+export const ICON_SHAPES = [
+    'bunny', 'cat', 'bear', 'frog', 'owl', 'fox', 'pig', 'ghost', 'skull', 'octopus',
+    'dog', 'cyclops', 'alien', 'croc', 'monkey', 'donkey', 'ladybug', 'penguin', 'robot', 'sheep',
+] as const;
+export const PLAYER_ICONS: readonly string[] = [
+    ...ICON_SHAPES.map((s) => s),
+    ...ICON_SHAPES.map((s) => `${s}-light`),
+];
 
 // ---------- Server -> phone ----------
 
 export interface PublicPlayer {
     id: string;
     name: string;
+    /** Profile icon, unique in the room. */
+    icon: string;
     isHost: boolean;
     isBot: boolean;
     /** Simulated "demo" player the host added (walks around on fake GPS). */
@@ -160,6 +181,11 @@ export interface MyState {
      * Drives the red danger pulse and heartbeat. Always null for infected players.
      */
     danger?: Zone | null;
+    /**
+     * Survivors only: how close the nearest infected is, 0 (just in range) to 1 (touching),
+     * in steps of 0.05. Drives how hard and fast the heartbeat vibrates. Never says who.
+     */
+    dangerLevel?: number | null;
 }
 
 /** Anonymous kill-feed line, broadcast to everyone ("Someone was infected… 3 survivors left"). */
@@ -199,6 +225,7 @@ export interface RadarEntry {
 
 export interface Standing {
     name: string;
+    icon?: string;
     startRole: Role;
     finalRole: Role;
     status: PlayerStatus;
@@ -315,8 +342,11 @@ export interface ProxReading {
 export type Ack<T = {}> = (res: ({ ok: true } & T) | { ok: false; error: string }) => void;
 
 export interface ClientToServer {
-    'room:create': (p: { playerId: string; name: string }, ack: Ack<{ code: string }>) => void;
-    'room:join': (p: { playerId: string; name: string; code: string }, ack: Ack<{ code: string }>) => void;
+    'room:create': (p: { playerId: string; name: string; icon?: string }, ack: Ack<{ code: string }>) => void;
+    /** If the icon is taken (or missing) the server gives the player the first free one. */
+    'room:join': (p: { playerId: string; name: string; code: string; icon?: string }, ack: Ack<{ code: string }>) => void;
+    /** Change your icon in the lobby. Fails if someone else has it. */
+    'lobby:icon': (p: { icon: string }, ack?: Ack) => void;
     'room:leave': (ack?: () => void) => void;
     'lobby:ready': (p: { ready: boolean }) => void;
     'lobby:settings': (p: { patch: Partial<Settings> }, ack?: Ack) => void;

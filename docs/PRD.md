@@ -799,7 +799,7 @@ This feature should be excluded from the initial prototype because it requires a
 * **Short rounds by default:** 6-minute rounds (host can still choose any length), 20 s dispersal, a 100 m starting zone that shrinks every 90 s, with a 20 s warning.
 * **Danger pulse:** survivors (innocent and doctor) get a danger level from the server: how close the nearest infected player is (never who). WARM/HOT makes the screen edge pulse red and the phone vibrate in a heartbeat that speeds up when HOT. Infected players never get it.
 * **Anonymous kill feed:** everyone sees brief name-free banners: "Someone was infected… 3 survivors left", "Someone was cured", "Someone left the zone and was eliminated".
-* **Round awards and share card:** the recap adds MVPs (most infections, longest survivor, best doctor, patient zero) and a shareable image card with the winner, awards and how the infection spread.
+* **Round awards:** the recap adds MVPs (most infections, longest survivor, best doctor, patient zero). (The shareable image card was removed.)
 * **Locked-phone play:** during the countdown and round the app keeps running in the background (background location with the blue indicator, Bluetooth central/peripheral background modes, scanning for the room's player IDs) and sends lock-screen alerts for danger, being infected and zone warnings. iOS slows Bluetooth updates in the background, so locked-phone proximity is less precise than with the app open.
 * **Demo players:** the host can add 3 simulated players who walk on fake GPS near the host; demo rooms ping every 10 s (released 5 s late).
 * **Rounds are 6 to 8 minutes** (default 6); the server clamps the setting to that range.
@@ -807,7 +807,9 @@ This feature should be excluded from the initial prototype because it requires a
 * **Doctor is not immune:** the doctor can be bitten. Infected win when the doctor is infected or everyone is infected; survivors win if time runs out otherwise (or if every infected is cured/eliminated).
 * **Heal window:** the doctor can only cure someone infected less than 60 s ago (patient zero's clock starts with the round). After that the infection is permanent: the server rejects the heal and the app hides Hold to Heal for that target.
 * **Infection events:** each infection shows an in-app banner with how many infected and survivors are left, a lock-screen notification "Someone was infected" when the app is backgrounded, and an anonymous marker near the spot (fuzzed 5-15 m) on everyone's map that fades out over 60 s.
-* **Heartbeat:** WARM = slow, soft single beat and faint red glow; HOT = fast, heavy double beat and strong glow.
+* **Heartbeat:** the server also sends a coarse 0-1 closeness (never who). The heartbeat has 4 steps: far = slow soft tap and faint glow; WARM close = medium double beat; HOT = fast heavy warning buzz; touching = a full phone vibration every beat with a thick red edge.
+* **Profile icons:** on Host and Join each player picks one of 40 original black-and-white creature icons (20 heads, each white-on-black or black-on-white). Every player in a room has a different one: the server gives a free icon if yours is taken, and you can change it in the lobby, where taken ones are greyed out. Rooms are capped at 40 players. Icons show in the lobby, on fellow-infected map pins (red ring), on the delayed survivor pings that infected see (amber ring, so infected know whose ping it is) and in the recap's infection tree. The infection marker and danger pulse stay anonymous.
+* **Cured screen:** a cured player gets a full-screen green "You've been cured!" screen with a success buzz, then goes straight back to the survivor map.
 
 ---
 

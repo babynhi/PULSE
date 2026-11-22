@@ -3,6 +3,9 @@ import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-n
 import { fieldStyles, party } from '../ui/fieldDay';
 import { formatClock } from '../ui/formatDuration';
 import type { InfectionNode } from './buildInfectionTree';
+import { PlayerIcon } from '../ui/PlayerIcon';
+
+type Icons = Record<string, string | undefined> | undefined;
 
 const rootGap = 12;
 const inset = 10;
@@ -13,7 +16,7 @@ function branchWidth(node: InfectionNode, columnWidth: number): number {
     : columnWidth;
 }
 
-function Branch({ node, columnWidth, viewer }: { node: InfectionNode; columnWidth: number; viewer?: string }) {
+function Branch({ node, columnWidth, viewer, icons }: { node: InfectionNode; columnWidth: number; viewer?: string; icons: Icons }) {
   const name = node.name === viewer ? `${node.name} (you)` : node.name;
   const source = node.origin === 'starter';
   const time = node.time === undefined ? undefined : formatClock(Math.floor(node.time / 1000));
@@ -28,9 +31,11 @@ function Branch({ node, columnWidth, viewer }: { node: InfectionNode; columnWidt
   return <View style={s.branch}>
     <View style={[s.node, { width: columnWidth }]} accessible
       accessibilityLabel={accessibleDescription}>
-      <View style={[s.marker, source && s.sourceMarker]} aria-hidden>
-        <Text style={s.initial} allowFontScaling={false}>{Array.from(node.name)[0]?.toUpperCase()}</Text>
-      </View>
+      {icons?.[node.name]
+        ? <View aria-hidden><PlayerIcon icon={icons[node.name]} size={34} ring={source ? party.orange : party.ink} ringWidth={3} /></View>
+        : <View style={[s.marker, source && s.sourceMarker]} aria-hidden>
+          <Text style={s.initial} allowFontScaling={false}>{Array.from(node.name)[0]?.toUpperCase()}</Text>
+        </View>}
       <Text style={s.name}>{name}</Text>
       {node.isDoctor && <Text style={s.doctorBadge}>Doctor</Text>}
       {cureLabel && <Text style={s.cured}>{cureLabel}</Text>}
@@ -44,14 +49,14 @@ function Branch({ node, columnWidth, viewer }: { node: InfectionNode; columnWidt
               index === 0 && s.railStart, index === node.children.length - 1 && s.railEnd]} />}
             <View style={[s.stem, s.childStem]} />
           </View>
-          <Branch node={child} columnWidth={columnWidth} viewer={viewer} />
+          <Branch node={child} columnWidth={columnWidth} viewer={viewer} icons={icons} />
         </View>)}
       </View>
     </>}
   </View>;
 }
 
-export function InfectionTree({ roots, viewer }: { roots: InfectionNode[]; viewer?: string }) {
+export function InfectionTree({ roots, viewer, icons }: { roots: InfectionNode[]; viewer?: string; icons?: Icons }) {
   const { fontScale } = useWindowDimensions();
   const [viewportWidth, setViewportWidth] = useState(0);
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
@@ -79,7 +84,7 @@ export function InfectionTree({ roots, viewer }: { roots: InfectionNode[]; viewe
     <ScrollView ref={scroll} horizontal nestedScrollEnabled focusable={overflow}
       accessibilityLabel="Infection branches" scrollEnabled={overflow}
       onLayout={event => setViewportWidth(event.nativeEvent.layout.width)} contentContainerStyle={s.roots}>
-      {roots.map((root, index) => <Branch key={index} node={root} columnWidth={columnWidth} viewer={viewer} />)}
+      {roots.map((root, index) => <Branch key={index} node={root} columnWidth={columnWidth} viewer={viewer} icons={icons} />)}
     </ScrollView>
   </View>;
 }

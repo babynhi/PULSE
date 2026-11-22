@@ -3,7 +3,8 @@ import { Animated, StyleSheet, View } from 'react-native';
 import { GoogleRoadMap, worldMetersAt } from './GoogleRoadMap.web';
 import { nextHeading, type HeadingTrack } from './heading';
 import { INFECTION_MARK_MS } from '../../../shared/protocol';
-import { agoLabel, allyInitials, markOpacity, pingOpacity } from './mapGeometry';
+import { agoLabel, markOpacity, pingOpacity } from './mapGeometry';
+import { PlayerIcon } from '../ui/PlayerIcon';
 import { ProximityRadar, RadarScope, SignalLabel, type RadarProps } from './RadarScope';
 import { mapColors, radarBaseSize, roleRadarTint } from './radarStyle';
 
@@ -70,21 +71,25 @@ export function MapWithRadar({ room, position, now, band, demoFallback }: RadarP
               const point = projection.fromLatLngToContainerPixel(ping);
               return point && <g key={i} opacity={pingAlpha}>
                 <title>Survivor · {agoLabel(ping.at, now)}</title>
-                <circle cx={point.x} cy={point.y} r="14" fill={mapColors.pingHalo} stroke={mapColors.pingEdge} />
-                <circle cx={point.x} cy={point.y} r="6" fill={mapColors.pingCore} stroke={mapColors.white} strokeWidth="1.5" />
-                <text x={point.x} y={point.y + 26} textAnchor="middle" fontSize="11" fontWeight="800" fill={mapColors.white}
+                <text x={point.x} y={point.y + 30} textAnchor="middle" fontSize="11" fontWeight="800" fill={mapColors.white}
                   stroke="rgba(10,13,22,0.85)" strokeWidth="3" paintOrder="stroke">{agoLabel(ping.at, now)}</text>
               </g>;
             })}
-            {room.allies?.map(ally => {
-              const point = projection.fromLatLngToContainerPixel(ally);
-              return point && <g key={ally.id} transform={`translate(${point.x} ${point.y})`}>
-                <title>{ally.name} · Teammate</title>
-                <circle r="15" fill={mapColors.infected} stroke={mapColors.white} strokeWidth="2" />
-                <text textAnchor="middle" dy="0.35em" fontSize="12" fontWeight="900" fill={mapColors.white}>{allyInitials(ally.name)}</text>
-              </g>;
-            })}
           </svg>
+          {pingAlpha > 0 && room.pings?.map(ping => {
+            const point = projection.fromLatLngToContainerPixel(ping);
+            return point && <View key={'ping-' + ping.icon} pointerEvents="none"
+              style={{ position: 'absolute', left: point.x - 17, top: point.y - 17, opacity: pingAlpha }}>
+              <PlayerIcon icon={ping.icon} size={28} ring={mapColors.amber} ringWidth={3} />
+            </View>;
+          })}
+          {room.allies?.map(ally => {
+            const point = projection.fromLatLngToContainerPixel(ally);
+            return point && <View key={ally.id} pointerEvents="none" accessibilityLabel={ally.name + ', teammate'}
+              style={{ position: 'absolute', left: point.x - 18, top: point.y - 18 }}>
+              <PlayerIcon icon={ally.icon} size={30} ring={mapColors.infected} ringWidth={3} />
+            </View>;
+          })}
           {player && <View pointerEvents="none" style={{ position: 'absolute', left: player.x - size / 2, top: player.y - size / 2 }}>
             <RadarScope size={size} zone={band} tint={tint} beam={beam} />
           </View>}

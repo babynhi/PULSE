@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Room, GameError, Player } from '../src/game';
-import type { Role } from '../../shared/protocol';
+import { PLAYER_ICONS, type Role } from '../../shared/protocol';
 
 let t0 = 1_000_000;
 
@@ -442,4 +442,45 @@ test('bots + debug proximity let one human play', () => {
     let now = t0;
     for (let i = 0; i < 25; i++) room.tick((now += 100));
     assert.equal(bot.role, 'infected');
+});
+
+test('profile icons: chosen icon kept, taken or unknown icons get a free one, all unique', () => {
+    const room = new Room('ICON');
+    const a = room.join('a', 'A', t0, false, 'fox');
+    const b = room.join('b', 'B', t0, false, 'fox'); // taken: gets a free one
+    const c = room.join('c', 'C', t0, false, 'not-an-icon');
+    const d = room.join('d', 'D', t0);
+    assert.equal(a.icon, 'fox');
+    assert.notEqual(b.icon, 'fox');
+    const all = [a, b, c, d].map((p) => p.icon);
+    assert.equal(new Set(all).size, 4, 'everyone has a different icon');
+    assert.ok(all.every((i) => PLAYER_ICONS.includes(i)));
+    // reconnecting keeps your icon
+    assert.equal(room.join('a', 'A', t0, false, 'owl').icon, 'fox');
+    // demo players get their own free icons too
+    room.addDemoPlayers('a', t0);
+    const icons = [...room.players.values()].map((p) => p.icon);
+    assert.equal(new Set(icons).size, icons.length);
+    // the lobby shows icons
+    assert.ok(room.viewFor('a', t0).players.every((p) => PLAYER_ICONS.includes(p.icon)));
+});
+
+test('profile icons: change in the lobby only, never to someone else’s', () => {
+    const s = setup(3);
+    const [a, b] = [s.room.players.get('p0')!, s.room.players.get('p1')!];
+    assert.throws(() => s.room.setIcon(a.id, 'owl'), /lobby/);
+    const room = new Room('ICON2');
+    const x = room.join('x', 'X', t0, false, 'owl');
+    room.join('y', 'Y', t0, false, 'cat');
+    assert.throws(() => room.setIcon(x.id, 'cat'), /already/);
+    assert.throws(() => room.setIcon(x.id, '🦊'), /Unknown/);
+    room.setIcon(x.id, 'robot-light');
+    assert.equal(x.icon, 'robot-light');
+    void b;
+});
+
+test('every icon file exists for every icon id', async () => {
+    const { existsSync } = await import('node:fs');
+    for (const icon of PLAYER_ICONS) assert.ok(existsSync(new URL(`../../app/assets/icons/${icon}.png`, import.meta.url)), icon);
+    assert.ok(PLAYER_ICONS.length >= 40, 'enough icons for a full room');
 });

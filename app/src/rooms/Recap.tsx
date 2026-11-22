@@ -7,7 +7,6 @@ import { fieldStyles, MenuItem, MenuPaper, party, TrackStripe } from '../ui/Menu
 import { formatClock } from '../ui/formatDuration';
 import { InfectionTree } from './InfectionTree';
 import { buildInfectionTree } from './buildInfectionTree';
-import { ShareRecap } from './ShareCard';
 
 type RecapProps = {
   winner: Team;
@@ -19,6 +18,8 @@ type RecapProps = {
   events: readonly GameEvent[];
   viewer?: string;
   mvps?: Mvp[];
+  /** profile icon by player name, for the infection tree */
+  icons?: Record<string, string | undefined>;
   onReplay: () => void;
 };
 
@@ -31,10 +32,11 @@ export function LiveRecap({ result, name, onReplay }: { result: GameResult; name
       startRole: player.startRole,
       status: [player.startRole !== player.finalRole ? player.startRole + ' → ' + player.finalRole : player.finalRole,
         player.status === 'eliminated' && 'Eliminated'].filter(Boolean).join(' · '),
-    }))} events={result.events ?? []} viewer={name} mvps={result.mvps} onReplay={onReplay} />;
+    }))} events={result.events ?? []} viewer={name} mvps={result.mvps}
+    icons={Object.fromEntries(result.standings.map(player => [player.name, player.icon]))} onReplay={onReplay} />;
 }
 
-export function RoundRecap({ winner, reason, role, durationSec, totals, standings, events, viewer, mvps, onReplay }: RecapProps) {
+export function RoundRecap({ winner, reason, role, durationSec, totals, standings, events, viewer, mvps, icons, onReplay }: RecapProps) {
   // const [showStandings, setShowStandings] = useState(false);
   const { width, fontScale } = useWindowDimensions();
   const { roots, doctor } = buildInfectionTree(standings, events);
@@ -76,8 +78,7 @@ export function RoundRecap({ winner, reason, role, durationSec, totals, standing
           <Text style={fieldStyles.label}>{m.name}{m.name === viewer ? ' (you)' : ''} · <Text style={fieldStyles.muted}>{m.detail}</Text></Text>
         </View>)}
       </View>}
-      <InfectionTree roots={roots} viewer={viewer} />
-      {mvps && <ShareRecap winner={winner} reason={reason} durationSec={durationSec} mvps={mvps} events={events} viewer={viewer} />}
+      <InfectionTree roots={roots} viewer={viewer} icons={icons} />
       <View style={s.actions}>
         {/* <FieldDisclosure label={`Standings (${standings.length})`} expanded={showStandings} onPress={() => setShowStandings(!showStandings)} /> */}
       </View>

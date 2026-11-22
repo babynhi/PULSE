@@ -158,7 +158,9 @@ test('pings: sampled every 30 s, fuzzed 20-40 m, released only after the delay, 
     assert.ok(v.pingAt !== null);
     assert.ok(v.pings.every((p) => p.at === sampledAt), 'each dot says when it was true');
     assert.ok(s.now() - v.pings[0].at >= PING_DELAY_MS, 'always at least the delay old');
-    assert.ok(v.pings.every((x) => Object.keys(x).sort().join() === 'at,lat,lng'), 'pings carry no id, name or role');
+    assert.ok(v.pings.every((x) => Object.keys(x).sort().join() === 'at,icon,lat,lng'), 'pings carry the icon, never an id, name or role');
+    const icons = new Set(v.pings.map((x) => x.icon));
+    assert.equal(icons.size, 3, 'each survivor ping wears that survivor’s own icon');
     for (const [id, ping] of s.room.pings) {
         const real = s.room.positions.get(id)!;
         const d = distanceMeters(real, ping);

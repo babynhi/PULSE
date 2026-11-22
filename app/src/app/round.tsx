@@ -75,6 +75,26 @@ export default function Round() {
   const phase = view?.phase;
   const live = phase === 'countdown' || phase === 'playing';
   const danger = view?.me?.danger ?? null;
+  // Cured: the role went from infected back to a survivor role. Show it loud and clear.
+  const myRole = phase === 'playing' ? view?.me?.role ?? null : null;
+  const [cured, setCured] = useState(false);
+  const [lastRole, setLastRole] = useState(myRole);
+  if (lastRole !== myRole) {
+    // Derived during render (not in an effect) so the screen appears on the same frame.
+    setLastRole(myRole);
+    if (lastRole === 'infected' && myRole && myRole !== 'infected') setCured(true);
+    else if (myRole === 'infected') setCured(false);
+  }
+  useEffect(() => {
+    if (cured) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  }, [cured]);
+  const closeCured = useCallback(() => {
+    setCured(false);
+    // The cure resets the role card; this screen already told them, so skip it.
+    send('game:roleAck');
+  }, []);
+  const serverNowForCure = useServerNow(1000);
+  const immuneSecs = Math.max(0, Math.ceil(((view?.me?.immuneUntil ?? 0) - serverNowForCure) / 1000));
   // Screen stays on during a round; alerts get permission at the start.
   useEffect(() => {
     if (!live) return;
@@ -147,7 +167,16 @@ export default function Round() {
           onCancelAction={() => send('action:cancel')}
           onStartAction={async id => { const error = await emitAck('action:start', { targetBleId: id }); if (error) throw new Error(error); }}
           zone={<RoundMap room={view} position={position} band={nearest} />} /> : null}
-    {phase === 'playing' && view.me?.status === 'active' && <DangerPulse danger={danger} />}
+    {phase === 'playing' && view.me?.status === 'active' && <DangerPulse danger={danger} level={view.me?.dangerLevel} />}
+    {cured && <Modal transparent animationType="fade" onRequestClose={closeCured}>
+      <View style={styles.curedBackdrop} accessibilityViewIsModal>
+        <Text style={styles.curedIcon}>💉</Text>
+        <Text accessibilityRole="header" style={styles.curedTitle}>You’ve been cured!</Text>
+        <Text style={styles.curedBody}>You’re an innocent survivor again. Stay away from the infected until the clock runs out.</Text>
+        {immuneSecs > 0 && <Text style={styles.curedBody}>Protected from bites for {immuneSecs}s</Text>}
+        <MenuItem label="Back to the game" onPress={closeCured} />
+      </View>
+    </Modal>}
     {phase === 'playing' && <View pointerEvents="none" style={styles.feed}><KillFeed feed={view.feed} /></View>}
     {leaving && <Modal transparent animationType="fade" onRequestClose={() => setLeaving(false)}>
       <View style={styles.backdrop}><View style={[fieldStyles.panel, styles.dialog]} accessibilityViewIsModal>
@@ -166,4 +195,8 @@ const styles = StyleSheet.create({
   boundary: { paddingHorizontal: 12, paddingVertical: 6, borderLeftWidth: 4, borderColor: party.alert },
   backdrop: { flex: 1, padding: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0008' },
   dialog: { width: '100%', maxWidth: 400 },
+  curedBackdrop: { flex: 1, padding: 28, gap: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: party.lime },
+  curedIcon: { fontSize: 72 },
+  curedTitle: { ...fieldStyles.title, textAlign: 'center' },
+  curedBody: { ...fieldStyles.body, textAlign: 'center', maxWidth: 360 },
 });

@@ -81,9 +81,9 @@ io.on('connection', (socket: Socket<ClientToServer, ServerToClient>) => {
                 if (r.dirty) broadcast(r);
             };
 
-    function enter(r: Room, playerId: string, name: string) {
+    function enter(r: Room, playerId: string, name: string, icon?: unknown) {
         if (ctx.code && ctx.code !== r.code) leaveCurrent();
-        r.join(playerId, name, Date.now());
+        r.join(playerId, name, Date.now(), false, icon);
         ctx.playerId = playerId;
         ctx.code = r.code;
         sockets.set(playerId, socket.id);
@@ -101,18 +101,18 @@ io.on('connection', (socket: Socket<ClientToServer, ServerToClient>) => {
         ctx.code = '';
     }
 
-    socket.on('room:create', ({ playerId, name }, ack) => {
+    socket.on('room:create', ({ playerId, name, icon }, ack) => {
         if (!playerId) return ack({ ok: false, error: 'Missing player id' });
         const code = makeRoomCode((c) => rooms.has(c));
-        enter(makeRoom(code), playerId, name);
+        enter(makeRoom(code), playerId, name, icon);
         ack({ ok: true, code });
     });
 
-    socket.on('room:join', ({ playerId, name, code }, ack) => {
+    socket.on('room:join', ({ playerId, name, code, icon }, ack) => {
         const r = rooms.get(String(code ?? '').trim().toUpperCase());
         if (!r) return ack({ ok: false, error: 'Room not found' });
         try {
-            enter(r, playerId, name);
+            enter(r, playerId, name, icon);
             ack({ ok: true, code: r.code });
         } catch (e) {
             ack(fail(e));
@@ -125,6 +125,7 @@ io.on('connection', (socket: Socket<ClientToServer, ServerToClient>) => {
     });
 
     socket.on('lobby:ready', inRoom((r, { ready }) => r.setReady(ctx.playerId, !!ready)));
+    socket.on('lobby:icon', inRoom((r, { icon }) => r.setIcon(ctx.playerId, icon), (a) => a[1]));
     socket.on(
         'lobby:settings',
         inRoom(
