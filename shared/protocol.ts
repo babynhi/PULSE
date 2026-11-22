@@ -93,6 +93,8 @@ export interface MyState {
 /** Registered devices this player may see on radar. */
 export interface RadarEntry {
     bleId: number;
+    /** Strongest fresh proximity bucket reported by either phone. Absent when out of sight. */
+    zone?: Zone;
     /** true only when the viewer is infected and so is this player. */
     ally: boolean;
     /** Only filled for allies. Everyone else is anonymous. */

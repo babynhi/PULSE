@@ -70,6 +70,22 @@ test('ready check blocks start', () => {
     assert.equal(room.phase, 'countdown');
 });
 
+test('the last Ready starts the round only while the host is also ready', () => {
+    const room = new Room('ABCD');
+    for (const id of ['host', 'sam', 'alex']) room.join(id, id, t0);
+    room.setReady('host', true);
+    room.setReady('sam', true);
+    room.tick(t0);
+    assert.equal(room.phase, 'lobby');
+    room.setReady('host', false);
+    room.setReady('alex', true);
+    room.tick(t0 + 100);
+    assert.equal(room.phase, 'lobby');
+    room.setReady('host', true);
+    room.tick(t0 + 200);
+    assert.equal(room.phase, 'countdown');
+});
+
 test('need 3 players and at least one innocent', () => {
     const room = new Room('ABCD');
     room.join('a', 'A', t0);
@@ -271,6 +287,10 @@ test('timer runs out with a survivor => survivors win', () => {
     s.advance(61_000, 500);
     assert.equal(s.room.result!.winner, 'survivors');
     assert.equal(s.room.result!.standings.length, 4);
+    s.room.playAgain('p1');
+    assert.equal(s.room.phase, 'lobby');
+    assert.equal(s.room.players.size, 4);
+    assert.ok(s.room.connectedPlayers().every(player => !player.ready));
 });
 
 test('race: doctor and infected on the same target, first to start wins', () => {
@@ -309,6 +329,33 @@ test('disconnect: protected, state kept, eliminated after window', () => {
     s.advance(31_000, 500);
     assert.equal(inn.status, 'eliminated');
     assert.equal(s.room.viewFor(inf.id, s.now()).radar.some((e) => e.bleId === inn.bleId), false);
+});
+
+test('radar uses fresh readings from either phone, expires silent contacts and protects identities', () => {
+    const s = setup(4);
+    const doctor = s.byRole('doctor')[0];
+    const target = s.byRole('infected')[0];
+    const signal = () => s.room.viewFor(doctor.id, s.now()).radar.find(r => r.bleId === target.bleId)!;
+    assert.equal(signal().zone, undefined);
+    s.room.dirty = false;
+    s.hot(target, doctor);
+    assert.ok(s.room.dirty);
+    s.cold(doctor, target);
+    assert.equal(signal().zone, 'HOT');
+    assert.equal(signal().name, undefined);
+    s.room.dirty = false;
+    s.hot(target, doctor);
+    assert.equal(s.room.dirty, false, 'steady signal does not rebroadcast every scan');
+    s.advance(1500);
+    s.cold(doctor, target);
+    s.advance(600);
+    assert.equal(signal().zone, 'COLD');
+    assert.ok(s.room.dirty, 'a missing report updates everyone when it expires');
+    s.advance(1500);
+    assert.equal(signal().zone, undefined);
+    s.hot(target, doctor);
+    s.room.disconnect(target.id, s.now());
+    assert.equal(signal().zone, undefined);
 });
 
 test('host migration keeps the game going', () => {

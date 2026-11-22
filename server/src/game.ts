@@ -333,8 +333,7 @@ export class Room {
     }
 
     playAgain(byId: string) {
-        this.requireHost(byId);
-        if (this.phase !== 'ended') return;
+        if (this.phase !== 'ended' || !this.players.get(byId)?.connected) return;
         for (const p of [...this.players.values()]) {
             if (!p.connected) {
                 this.players.delete(p.id);
@@ -359,7 +358,19 @@ export class Room {
                     this.dirty = true;
                 }
             }
+            if (this.players.get(this.hostId)?.ready && this.startBlockers().length === 0) {
+                this.start(this.hostId, now);
+            }
             return;
+        }
+        if (this.phase === 'playing' || this.phase === 'countdown') {
+            for (const readings of this.prox.values()) {
+                for (const [bleId, reading] of readings) {
+                    if (now - reading.at <= PROX_STALE_MS) continue;
+                    readings.delete(bleId);
+                    this.dirty = true;
+                }
+            }
         }
         if (this.phase === 'countdown' && this.countdownEndsAt !== null && now >= this.countdownEndsAt) {
             this.phase = 'playing';
@@ -449,11 +460,15 @@ export class Room {
 
     reportProx(playerId: string, readings: ProxReading[], now: number) {
         const p = this.players.get(playerId);
-        if (!p || p.status !== 'active' || (this.phase !== 'playing' && this.phase !== 'countdown')) return;
+        if (!p?.connected || p.status !== 'active' || (this.phase !== 'playing' && this.phase !== 'countdown')) return;
+        const eligible = new Set([...this.players.values()].filter(other =>
+            other !== p && other.connected && other.status === 'active').map(other => other.bleId));
         let m = this.prox.get(playerId);
         if (!m) this.prox.set(playerId, (m = new Map()));
         for (const r of readings.slice(0, 100)) {
-            if (typeof r?.bleId !== 'number' || !['HOT', 'WARM', 'COLD'].includes(r.zone)) continue;
+            if (!eligible.has(r?.bleId) || !['HOT', 'WARM', 'COLD'].includes(r.zone)) continue;
+            const previous = m.get(r.bleId);
+            if (previous?.zone !== r.zone || now - previous.at > PROX_STALE_MS) this.dirty = true;
             m.set(r.bleId, { bleId: r.bleId, zone: r.zone, rssi: Number(r.rssi) || 0, at: now });
         }
     }
@@ -462,13 +477,21 @@ export class Room {
      * Is A within bite/heal range of B right now? Either phone hearing the other as HOT counts,
      * because BLE is often asymmetric (one phone hears better than the other).
      */
-    inRange(a: Player, b: Player, now: number): boolean {
+    private proximityBetween(a: Player, b: Player, now: number): Zone | undefined {
+        if (!a.connected || !b.connected) return undefined;
         const dbg = this.debugProx.get(pairKey(a.id, b.id));
-        if (dbg) return dbg === 'HOT';
+        if (dbg) return dbg;
         const ab = this.prox.get(a.id)?.get(b.bleId);
         const ba = this.prox.get(b.id)?.get(a.bleId);
-        const hot = (r?: { zone: Zone; at: number }) => !!r && r.zone === 'HOT' && now - r.at <= PROX_STALE_MS;
-        return hot(ab) || hot(ba);
+        const heard = ab && now - ab.at <= PROX_STALE_MS ? ab.zone : undefined;
+        const reported = ba && now - ba.at <= PROX_STALE_MS ? ba.zone : undefined;
+        if (heard === 'HOT' || reported === 'HOT') return 'HOT';
+        if (heard === 'WARM' || reported === 'WARM') return 'WARM';
+        return heard ?? reported;
+    }
+
+    inRange(a: Player, b: Player, now: number): boolean {
+        return this.proximityBetween(a, b, now) === 'HOT';
     }
 
     // ---------- bite / heal ----------
@@ -672,7 +695,8 @@ export class Room {
             for (const p of this.players.values()) {
                 if (p.id === me.id || p.status !== 'active') continue;
                 const ally = roleVisible && me.role === 'infected' && p.role === 'infected';
-                radar.push(ally ? { bleId: p.bleId, ally, name: p.name } : { bleId: p.bleId, ally });
+                const zone = this.proximityBetween(me, p, now);
+                radar.push(ally ? { bleId: p.bleId, zone, ally, name: p.name } : { bleId: p.bleId, zone, ally });
                 const z = this.debugProx.get(pairKey(me.id, p.id));
                 if (z) debugProx[p.bleId] = z;
             }
@@ -711,7 +735,7 @@ export class Room {
                         status: me.status,
                     }
                     : null,
-            radar,
+            radar: radar.sort((a, b) => a.bleId - b.bleId),
             debugProx,
             debugEnabled: this.debugEnabled,
             result: this.result,
@@ -736,11 +760,4 @@ function shuffle<T>(arr: T[], rng: () => number): T[] {
     return arr;
 }
 
-const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // no I or O
-export function makeRoomCode(taken: (c: string) => boolean, rng = Math.random): string {
-    for (; ;) {
-        let c = '';
-        for (let i = 0; i < 4; i++) c += CODE_CHARS[Math.floor(rng() * CODE_CHARS.length)];
-        if (!taken(c)) return c;
-    }
-}
+export { makeRoomCode } from '../../shared/roomCode';

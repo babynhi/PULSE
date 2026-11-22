@@ -1,6 +1,7 @@
 import { randomUUID } from 'expo-crypto';
 import { io, type Socket } from 'socket.io-client';
-import type { ClientToServer, RoomView, ServerToClient } from '../../../shared/protocol';
+import type { ClientToServer, ProxReading, RoomView, ServerToClient, Settings } from '../../../shared/protocol';
+import { defaultServerUrl } from '../net/serverUrl';
 
 export type RoomEntry =
   | { mode: 'host'; name: string }
@@ -12,8 +13,9 @@ export function enterRoom(
   entry: RoomEntry,
   onState: (room: RoomView) => void,
   onFailure: (message: string, roomCode?: string) => void,
+  events: Partial<Pick<ServerToClient, 'action:progress' | 'action:end' | 'notice'>> = {},
 ) {
-  const url = process.env.EXPO_PUBLIC_SERVER_URL?.trim();
+  const url = process.env.EXPO_PUBLIC_SERVER_URL?.trim() || (__DEV__ ? defaultServerUrl() : undefined);
   if (!url) {
     throw new Error('The game server address is missing. Set EXPO_PUBLIC_SERVER_URL in the app configuration.');
   }
@@ -52,7 +54,10 @@ export function enterRoom(
   });
   socket.on('notice', (notice) => {
     if (notice.kind === 'kicked') fail(notice.text);
+    else events.notice?.(notice);
   });
+  socket.on('action:progress', progress => events['action:progress']?.(progress));
+  socket.on('action:end', end => events['action:end']?.(end));
   socket.on('disconnect', () => fail('Connection lost. Check your connection and rejoin the room.'));
   socket.on('connect_error', () => fail('Could not reach the game server. Check your connection and try again.'));
   socket.once('connect', () => {
@@ -75,11 +80,35 @@ export function enterRoom(
     setReady(ready: boolean) {
       if (!closed && socket.connected) socket.emit('lobby:ready', { ready });
     },
+    async saveSettings(patch: Partial<Settings>) {
+      if (closed || !socket.connected) throw new Error('Reconnect to save your settings.');
+      const result = await socket.timeout(5000).emitWithAck('lobby:settings', { patch });
+      if (!result.ok) throw new Error(result.error);
+    },
+    acknowledgeRole() {
+      if (!closed && socket.connected) socket.emit('game:roleAck');
+    },
+    async startAction(targetBleId: number) {
+      if (closed || !socket.connected) throw new Error('Reconnect to play.');
+      const result = await socket.timeout(5000).emitWithAck('action:start', { targetBleId });
+      if (!result.ok) throw new Error(result.error);
+    },
+    cancelAction() {
+      if (!closed && socket.connected) socket.emit('action:cancel');
+    },
+    reportProximity(readings: ProxReading[]) {
+      if (!closed && socket.connected) socket.volatile.emit('prox:report', { readings });
+    },
+    playAgain() {
+      if (!closed && socket.connected) socket.emit('game:playAgain');
+    },
     leave() {
       close(true);
     },
   };
 }
+
+export type RoomSession = ReturnType<typeof enterRoom>;
 
 let playerId: string | undefined;
 

@@ -1,12 +1,18 @@
 import { router, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
-import type { RoomView } from '../../../shared/protocol';
-import { enterRoom } from './session';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Modal, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import type { ActionProgress, RoomView } from '../../../shared/protocol';
+import { enterRoom, type RoomSession } from './session';
+import { Lobby } from './Lobby';
+import { RoomSettingsForm } from './RoomSettingsForm';
+import { LiveRound } from './LiveRound';
+import { Dispersal } from './Dispersal';
+import { LiveRecap } from './Recap';
+import { useRoomProximity } from '../net/useProxReporter';
 
-import { FieldToggle, fieldStyles, menuActionLayout, MenuItem, MenuPaper, party, TrackStripe } from '../ui/Menu';
+import { fieldStyles, menuActionLayout, MenuItem, MenuPaper, party, TrackStripe } from '../ui/Menu';
 
 export function RoomEntryScreen({ mode }: { mode: 'host' | 'join' }) {
   const [focused, setFocused] = useState<'name' | 'code' | null>(null);
@@ -16,14 +22,22 @@ export function RoomEntryScreen({ mode }: { mode: 'host' | 'join' }) {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [room, setRoom] = useState<RoomView | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [progress, setProgress] = useState<ActionProgress | null>(null);
+  const [feedback, setFeedback] = useState('');
+  const [bluetoothStatus, setBluetoothStatus] = useState('');
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const [rejoinCode, setRejoinCode] = useState('');
-  const active = useRef<ReturnType<typeof enterRoom> | null>(null);
-  useEffect(() => () => active.current?.leave(), []);
+  const [session, setSession] = useState<RoomSession | null>(null);
+  useEffect(() => () => session?.leave(), [session]);
+  const onBluetooth = useCallback((message: string, healthy?: boolean) => {
+    setBluetoothStatus(healthy ? '' : message);
+  }, []);
+  useRoomProximity(room, session?.reportProximity, onBluetooth);
 
   function submit() {
-    if (pending || active.current) return;
+    if (pending || session) return;
     const playerName = name.trim();
     const roomCode = (rejoinCode || code).trim().toUpperCase();
     const joining = mode === 'join' || Boolean(rejoinCode);
@@ -36,17 +50,37 @@ export function RoomEntryScreen({ mode }: { mode: 'host' | 'join' }) {
     setMissing(null);
     setPending(true);
     try {
-      active.current = enterRoom(
+      const connection = enterRoom(
         joining ? { mode: 'join', name: playerName, code: roomCode } : { mode: 'host', name: playerName },
-        (state) => { setPending(false); setRoom(state); },
+        (state) => {
+          setPending(false);
+          setRoom(state);
+          if (state.phase !== 'lobby') setSettingsOpen(false);
+          if (state.phase !== 'playing') {
+            setProgress(null);
+            setFeedback('');
+          }
+        },
         (message, previousCode) => {
-          active.current = null;
+          setSession(null);
           setPending(false);
           setRoom(null);
+          setSettingsOpen(false);
+          setProgress(null);
+          setFeedback('');
           setError(message);
           setRejoinCode(previousCode || '');
         },
+        {
+          'action:progress': event => { setProgress(event); setFeedback(''); },
+          'action:end': event => {
+            setProgress(null);
+            if (!event.ok) setFeedback(event.reason === 'Released' ? 'Released early. Try holding again.' : event.reason ?? 'Action interrupted.');
+          },
+          notice: notice => setFeedback(notice.text),
+        },
       );
+      setSession(connection);
     } catch (cause) {
       setPending(false);
       setError(cause instanceof Error ? cause.message : 'Could not open the connection.');
@@ -54,39 +88,39 @@ export function RoomEntryScreen({ mode }: { mode: 'host' | 'join' }) {
   }
 
   const action = pending ? 'Connecting…' : rejoinCode ? 'Rejoin room' : mode === 'host' ? 'Create room' : 'Join room';
-  if (room) {
-    const self = room.players.find(player => player.id === room.youId);
-    const guests = room.players.filter(player => player.connected && !player.isHost);
-    const lobby = room.phase === 'lobby';
+  if (room && session) {
+    if (room.phase === 'countdown') return <Dispersal room={room} bluetoothStatus={bluetoothStatus} />;
+    if (room.phase === 'playing') return <>
+      <Stack.Screen options={{ headerShown: true, title: 'Round' }} />
+      <LiveRound room={room} onRoleAck={() => { setFeedback(''); session.acknowledgeRole(); }} onStartAction={session.startAction}
+        onCancelAction={session.cancelAction} actionProgress={progress} feedback={feedback} bluetoothStatus={bluetoothStatus} />
+    </>;
+    if (room.phase === 'ended' && room.result) return <>
+      <Stack.Screen options={{ headerShown: true, title: 'Round recap' }} />
+      <LiveRecap result={room.result} name={room.players.find(p => p.id === room.youId)?.name}
+        onReplay={session.playAgain} />
+    </>;
     return (
-      <ScrollView style={fieldStyles.page}>
-        <Stack.Screen options={{ headerShown: true, title: 'Lobby' }} />
-        <TrackStripe />
-        <View style={fieldStyles.content}>
-          <Text accessibilityRole="header" style={fieldStyles.title}>Room {room.code}</Text>
-          {lobby && self?.connected && !self.isHost && (
-            <FieldToggle label="I’m ready" value={self.ready} onValueChange={ready => active.current?.setReady(ready)} />
-          )}
-          <MenuItem label="Share room code" secondary={lobby && !!self && !self.isHost} onPress={async () => {
-            setError('');
-            try { await Share.share({ message: 'Join my PULSE room: ' + room.code }); }
-            catch { setError('Sharing is unavailable. Give your friends the room code above.'); }
-          }} />
-          {error !== '' && <Text accessibilityRole="alert" style={fieldStyles.error}>{error}</Text>}
-          <Text style={fieldStyles.heading}>Players · {room.players.length}</Text>
-          <View style={fieldStyles.panel}>
-            {lobby && <Text accessibilityLiveRegion="polite" style={fieldStyles.label}>
-              {guests.length ? `${guests.filter(player => player.ready).length} of ${guests.length} guests ready` : 'Waiting for players to join'}
-            </Text>}
-            {room.players.map(player => (
-              <View key={player.id} style={entry.rosterRow}>
-                <Text style={fieldStyles.label}>{player.name}{player.id === room.youId ? ' (you)' : ''}{player.isHost ? ' · Host' : ''}</Text>
-                <Text style={fieldStyles.muted}>{!player.connected ? 'Disconnected' : lobby && player.isHost ? 'Hosting' : player.ready ? 'Ready' : 'Waiting'}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      </ScrollView>
+      <>
+      <Lobby roomCode={room.code} youId={room.youId} players={room.players} settings={room.settings}
+        onReady={session.setReady} onSettings={() => setSettingsOpen(true)}
+        messages={[...room.startBlockers.filter(reason => !reason.startsWith('Waiting for ')), ...room.warnings]}
+        error={error} onShare={async () => {
+          setError('');
+          try { await Share.share({ message: 'Join my PULSE room: ' + room.code }); }
+          catch { setError('Sharing is unavailable. Give your friends the room code above.'); }
+        }} />
+      {settingsOpen && <Modal visible animationType="slide" presentationStyle="pageSheet"
+        onRequestClose={() => setSettingsOpen(false)}>
+        <SafeAreaView edges={['top', 'left', 'right']} style={entry.settingsHeader}>
+          <Text accessibilityRole="header" style={fieldStyles.heading}>Game settings</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close settings" onPress={() => setSettingsOpen(false)}
+            style={entry.back}><Text style={entry.backText}>Close</Text></Pressable>
+        </SafeAreaView>
+        <RoomSettingsForm settings={room.settings} canEdit={room.youId === room.hostId}
+          onSave={session.saveSettings} onClose={() => setSettingsOpen(false)} />
+      </Modal>}
+      </>
     );
   }
 
@@ -149,7 +183,7 @@ export function RoomEntryScreen({ mode }: { mode: 'host' | 'join' }) {
 
 const entry = StyleSheet.create({
   page: fieldStyles.page,
-  rosterRow: { ...fieldStyles.row, justifyContent: 'space-between' },
+  settingsHeader: { ...fieldStyles.row, justifyContent: 'space-between', backgroundColor: party.sky, paddingHorizontal: 20 },
   topInset: { backgroundColor: party.sky },
   header: { backgroundColor: party.sky, alignItems: 'center', paddingHorizontal: 24 },
   headerInner: { width: '100%', maxWidth: 420 },

@@ -13,7 +13,7 @@ let stateSub: { remove(): void } | null = null;
 export function startBluetooth(
     myNumber: number,
     onHeard: (playerNumber: number, rssi: number) => void,
-    onStatus: (text: string) => void,
+    onStatus: (text: string, healthy?: boolean) => void,
 ) {
     stopBluetooth();
     manager ??= new BleManager(); // first time: iPhone shows the Bluetooth permission popup
@@ -35,10 +35,10 @@ export function startBluetooth(
         });
 
         // 2. Broadcast.
-        if (!advertiserAvailable) return onStatus('Scanning, but broadcast module missing (use the dev build)');
+        if (!advertiserAvailable) return onStatus('This phone can scan. Install the PULSE development build so others can detect you.');
         try {
             await startAdvertising(idToUuid(myNumber));
-            onStatus('Bluetooth on: broadcasting + scanning');
+            onStatus('Bluetooth on: broadcasting + scanning', true);
         } catch (e: any) {
             onStatus('Scanning, but broadcast failed: ' + e.message);
         }

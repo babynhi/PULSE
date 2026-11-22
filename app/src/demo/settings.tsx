@@ -24,15 +24,15 @@ const defaults: DemoSettings = {
 const SettingsContext = createContext<{
   settings: DemoSettings;
   canEdit: boolean;
-  openRoom: (host: boolean) => void;
+  openRoom: (host: boolean, playerCount: number) => void;
   setSettings: (next: DemoSettings) => void;
 } | null>(null);
 
 export function DemoSettingsProvider({ children }: { children: ReactNode }) {
   const [settings, save] = useState(defaults);
   const [canEdit, setCanEdit] = useState(false);
-  function openRoom(host: boolean) {
-    save(defaults);
+  function openRoom(host: boolean, playerCount: number) {
+    save({ ...defaults, maxPlayers: playerCount });
     setCanEdit(host);
   }
   return <SettingsContext.Provider value={{ settings, canEdit, openRoom, setSettings: next => {

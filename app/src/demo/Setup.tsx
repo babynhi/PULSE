@@ -3,14 +3,15 @@ import { router } from 'expo-router';
 import { useDemoSettings } from './settings';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { FieldChoice, FieldToggle, fieldStyles, MenuItem, TrackStripe } from '../ui/Menu';
+import { FieldChoice, fieldStyles, MenuItem, TrackStripe } from '../ui/Menu';
+import { Lobby } from '../rooms/Lobby';
+import { makeRoomCode } from '../../../shared/roomCode';
 
 const companions = [
   { name: 'Mara', signal: '−55 dBm' },
   { name: 'Jules', signal: '−62 dBm' },
   { name: 'Remy', signal: '−58 dBm' },
 ];
-const roomCode = 'PULSE';
 type Stage = 'entry' | 'lobby' | 'calibrate' | 'disperse';
 
 export default function Setup({ onStart }: { onStart: (name: string) => void }) {
@@ -19,7 +20,7 @@ export default function Setup({ onStart }: { onStart: (name: string) => void }) 
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
-  const [ready, setReady] = useState(false);
+  const [roomCode] = useState(() => makeRoomCode(() => false));
   const { settings, openRoom } = useDemoSettings();
   const [seconds, setSeconds] = useState(0);
   const [heard, setHeard] = useState(0);
@@ -42,11 +43,22 @@ export default function Setup({ onStart }: { onStart: (name: string) => void }) 
 
   function enter() {
     if (!name.trim()) return setError('Enter your player name.');
-    if (!host && code.trim().toUpperCase() !== roomCode) return setError('Use PULSE to join the demo room.');
-    setReady(false);
-    openRoom(host);
+    if (!host && code.trim().toUpperCase() !== roomCode) return setError(`Enter ${roomCode} to join this practice room.`);
+    openRoom(host, companions.length + 1);
     setError('');
     setStage('lobby');
+  }
+
+  if (stage === 'lobby') {
+    const players = [
+      { id: 'local', name: name.trim(), isHost: host, ready: false, connected: true },
+      ...companions.map((player, index) => ({
+        id: player.name, name: player.name, isHost: !host && index === 0, ready: true, connected: true,
+      })),
+    ];
+    return <Lobby roomCode={roomCode} youId="local" players={players} settings={settings}
+      onSettings={() => router.push('/game-settings')}
+      onReady={() => { setHeard(0); setStage('calibrate'); }} />;
   }
 
   return (
@@ -64,37 +76,14 @@ export default function Setup({ onStart }: { onStart: (name: string) => void }) 
           {!host && <>
             <Text style={fieldStyles.label}>Room code</Text>
             <TextInput style={fieldStyles.input} accessibilityLabel="Room code" value={code} onChangeText={setCode} autoCapitalize="characters" autoCorrect={false} />
-            <Text style={fieldStyles.muted}>Use PULSE to join the demo room.</Text>
+            <Text style={fieldStyles.muted}>Practice room code: {roomCode}</Text>
           </>}
           {error !== '' && <Text accessibilityRole="alert" style={fieldStyles.error}>{error}</Text>}
           <MenuItem label={host ? 'Create room' : 'Enter room'} onPress={enter} />
         </>}
-        {stage === 'lobby' && <>
-          <Text style={fieldStyles.kicker}>ROOM CODE</Text>
-          <Text accessibilityRole="header" style={fieldStyles.title}>{roomCode}</Text>
-          <View style={fieldStyles.panel}>
-            <FieldToggle label="I’m ready for calibration" value={ready} onValueChange={setReady} />
-            <MenuItem label={host ? 'Start calibration' : 'Continue to calibration'} disabled={!ready}
-              onPress={() => { setHeard(0); setStage('calibrate'); }} />
-          </View>
-          <Text accessibilityLiveRegion="polite" style={fieldStyles.label}>
-            {companions.length + Number(ready)} of {companions.length + 1} players ready
-          </Text>
-          <View style={fieldStyles.panel}>
-            {[name.trim(), ...companions.map(player => player.name)].map((player, i) => (
-              <View style={[fieldStyles.row, s.item]} key={i}>
-                <Text style={fieldStyles.body}>{player}{i === 0 ? ' (you)' : ''}{i === (host ? 0 : 1) ? ' · Host' : ''}</Text>
-                <Text style={fieldStyles.muted}>{i === 0 && !ready ? 'Waiting' : 'Ready'}</Text>
-              </View>
-            ))}
-          </View>
-          <Text style={fieldStyles.muted}>{settings.durationSec / 60} min round · {settings.disperseSec}s dispersal</Text>
-          <MenuItem secondary label={host ? 'Edit game settings' : 'View game settings'} onPress={() => router.push('/game-settings')} />
-          <MenuItem secondary label="Leave room" onPress={() => setStage('entry')} />
-        </>}
         {stage === 'calibrate' && <>
           <Text accessibilityRole="header" style={fieldStyles.title}>Calibration</Text>
-          <Text style={fieldStyles.muted}>Gather together while the demo checks nearby signals.</Text>
+          <Text style={fieldStyles.muted}>Gather together for the signal check.</Text>
           <Text style={fieldStyles.label}>Simulated Bluetooth readings</Text>
           <View style={fieldStyles.panel}>{companions.map((player, i) => (
             <View key={player.name} style={[fieldStyles.row, s.item]}><Text style={fieldStyles.body}>{player.name}</Text><Text style={[fieldStyles.label, s.signal]}>{i < heard ? player.signal : 'Scanning…'}</Text></View>

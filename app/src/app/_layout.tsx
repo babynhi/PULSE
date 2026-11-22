@@ -17,7 +17,7 @@ export default function Navigation() {
         <Stack.Screen name="ble-lab" options={{ title: 'Game and Bluetooth Labs' }} />
         <Stack.Screen name="host" options={{ title: 'Host Game' }} />
         <Stack.Screen name="join" options={{ title: 'Join Game' }} />
-        <Stack.Screen name="demo" options={{ title: 'Demo round' }} />
+        <Stack.Screen name="demo" options={{ title: 'Round preview' }} />
         <Stack.Screen name="game-settings" options={{ title: 'Game settings' }} />
       </Stack>
     </DemoSettingsProvider>

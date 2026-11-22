@@ -9,6 +9,7 @@ export const party = {
   sky: '#84DDF1',
   lime: '#C4F84A',
   orange: '#FF7548',
+  ready: '#24643B',
   alert: '#8E301C',
 };
 
