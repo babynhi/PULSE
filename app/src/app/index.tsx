@@ -2,7 +2,8 @@ import { router, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Image, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { menuActionLayout, MenuItem, MenuPaper, party } from '../ui/Menu';
+import { clearLastNotice, useGameStore } from '../net/client';
+import { FieldChoice, fieldStyles, menuActionLayout, MenuItem, MenuPaper, party } from '../ui/Menu';
 
 const trackHeight = 246;
 const bankAngle = 14;
@@ -31,6 +32,7 @@ function Infield() {
 }
 
 export default function Home() {
+  const { lastNotice } = useGameStore();
   return (
     <>
       <SafeAreaView edges={['top']} style={s.topInset} />
@@ -45,6 +47,10 @@ export default function Home() {
           </View>
           <View style={s.actions}>
             <MenuPaper />
+            {!!lastNotice && <View style={fieldStyles.row}>
+              <Text accessibilityRole="alert" style={fieldStyles.error}>{lastNotice}</Text>
+              <FieldChoice label="Dismiss" onPress={clearLastNotice} />
+            </View>}
             <MenuItem label="Join a game" onPress={() => router.push('/join')} />
             <MenuItem label="Host a game" secondary onPress={() => router.push('/host')} />
           </View>

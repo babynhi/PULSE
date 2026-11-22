@@ -1,22 +1,16 @@
 import { createContext, type ReactNode, useContext, useState } from 'react';
-import { DEFAULT_SETTINGS, type Settings } from '../../../shared/protocol';
+import { DEFAULT_SETTINGS, ZONE_WARNING_MS, type Settings } from '../../../shared/protocol';
 
 export interface DemoSettings extends Settings {
-  zoneRadiusM: number;
-  zoneShrinkSec: number;
   zoneWarningSec: number;
-  zoneGraceSec: number;
   pingIntervalSec: number;
   pingDurationSec: number;
 }
 
 const defaults: DemoSettings = {
   ...DEFAULT_SETTINGS,
-  zoneEnabled: true,
-  zoneRadiusM: 100,
-  zoneShrinkSec: 180,
-  zoneWarningSec: 30,
-  zoneGraceSec: 10,
+  zoneStartRadiusM: 100,
+  zoneWarningSec: ZONE_WARNING_MS / 1000,
   pingIntervalSec: 180,
   pingDurationSec: 30,
 };

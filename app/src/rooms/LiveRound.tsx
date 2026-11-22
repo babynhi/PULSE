@@ -16,7 +16,7 @@ function clock(seconds: number) {
   return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
 }
 
-function RoleCard({ role, name, charges, onAck }: { role: Role; name: string; charges: number; onAck: () => void }) {
+function RoleCard({ role, name, charges, allies, onAck }: { role: Role; name: string; charges: number; allies: string[]; onAck: () => void }) {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     const sub = AppState.addEventListener('change', state => { if (state !== 'active') setOpen(false); });
@@ -31,9 +31,22 @@ function RoleCard({ role, name, charges, onAck }: { role: Role; name: string; ch
       <MenuPaper />
       <Text style={f.body}>{open ? info.goal : 'Turn the screen toward yourself before you peek.'}</Text>
       {open && role === 'doctor' && <Text style={f.heading}>{charges} healing {charges === 1 ? 'charge' : 'charges'}</Text>}
+      {open && allies.length > 0 && <Text style={f.label}>Fellow infected · {allies.join(', ')}</Text>}
     </View>
     <MenuItem label={open ? 'Hide role and play' : 'Reveal my role'} onPress={open ? onAck : () => setOpen(true)} />
   </ScrollView>;
+}
+
+function RolePeek({ role, allies }: { role: Role; allies: string[] }) {
+  const [peeking, setPeeking] = useState(false);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', state => { if (state !== 'active') setPeeking(false); });
+    return () => sub.remove();
+  }, []);
+  return <Pressable accessibilityRole="button" accessibilityLabel="Hold to peek at your role"
+    onPressIn={() => setPeeking(true)} onPressOut={() => setPeeking(false)} style={s.peek}>
+    <Text style={f.label}>{peeking ? [roles[role].name, ...allies].join(' · ') : 'Hold to peek at role'}</Text>
+  </Pressable>;
 }
 
 type Actions = {
@@ -116,6 +129,7 @@ interface RoundProps extends Actions {
   feedback: string;
   bluetoothStatus?: string;
   zone?: ReactNode;
+  urgentZone?: boolean;
 }
 
 function NearbyRow({ name, band, ally, selected, onSelect }: {
@@ -137,7 +151,7 @@ function NearbyRow({ name, band, ally, selected, onSelect }: {
 }
 
 export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, onRoleAck, actionProgress, onStartAction,
-  onCancelAction, feedback, bluetoothStatus, zone }: RoundProps) {
+  onCancelAction, feedback, bluetoothStatus, zone, urgentZone }: RoundProps) {
   const insets = useSafeAreaInsets();
   const [now, setNow] = useState(() => Date.now() + clockOffset);
   const [choice, setChoice] = useState<number | null>(null);
@@ -154,7 +168,8 @@ export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, on
     <Text style={f.metric}>{clock(left)}</Text>
   </View>;
   if (!role) return <View style={[f.page, f.content]}><Text style={f.body}>Waiting for your role…</Text></View>;
-  if (!me.roleAcked) return <RoleCard key={role} role={role} name={name} charges={me.healsLeft} onAck={onRoleAck} />;
+  const allies = role === 'infected' ? radar.flatMap(entry => entry.ally && entry.name ? [entry.name] : []) : [];
+  if (!me.roleAcked) return <RoleCard key={role} role={role} name={name} charges={me.healsLeft} allies={allies} onAck={onRoleAck} />;
 
   const contacts = radar.filter((r): r is RadarEntry & { zone: Zone } => r.zone !== undefined)
     .sort((a, b) => bands[b.zone].rank - bands[a.zone].rank || a.bleId - b.bleId);
@@ -173,6 +188,7 @@ export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, on
 
   return <View style={f.page}>
     <ScrollView style={f.page} contentContainerStyle={f.content}>
+      {urgentZone && zone}
       <View style={s.scoreboard}>
         <View style={s.metric}><Text style={f.kicker}>TIME LEFT</Text><Text style={f.metric}>{clock(left)}</Text></View>
         {role === 'doctor' && <View style={[s.metric, s.charges]}>
@@ -189,7 +205,8 @@ export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, on
         {contacts.length === 0 && <Text style={[f.muted, s.empty]}>{bluetoothStatus || 'No signals yet. Move closer to another player with PULSE open.'}</Text>}
       </View>
       {contacts.length > 0 && !!bluetoothStatus && <Text style={f.muted}>{bluetoothStatus}</Text>}
-      {zone}
+      {!urgentZone && zone}
+      <RolePeek role={role} allies={allies} />
       {!canAct && !!feedback && <Text accessibilityLiveRegion="polite" style={f.body}>{feedback}</Text>}
     </ScrollView>
     {canAct && <View style={[s.dock, { paddingBottom: Math.max(insets.bottom, 12) }]}>
@@ -205,16 +222,18 @@ export function RoundScreen({ me, name, radar, settings, endsAt, clockOffset, on
 }
 
 export function LiveRound({ room, ...actions }: Actions & {
-  room: RoomView; onRoleAck: () => void; feedback: string; bluetoothStatus?: string;
+  room: RoomView; radar: RadarEntry[]; onRoleAck: () => void; feedback: string; bluetoothStatus?: string; zone?: ReactNode;
 }) {
   const [clockOffset] = useState(() => room.serverNow - Date.now());
   if (!room.me || room.endsAt === null) return null;
   return <RoundScreen key={room.me.bleId} me={room.me} name={room.players.find(p => p.id === room.youId)?.name ?? ''}
-    radar={room.radar} settings={room.settings} endsAt={room.endsAt} clockOffset={clockOffset} {...actions} />;
+    urgentZone={room.me.graceEndsAt != null || room.zone?.warning} settings={room.settings} endsAt={room.endsAt}
+    clockOffset={clockOffset} {...actions} />;
 }
 
 const s = StyleSheet.create({
   scoreboard: { flexDirection: 'row', flexWrap: 'wrap', borderWidth: 1, borderColor: party.ink, borderRadius: 8, overflow: 'hidden', backgroundColor: party.sky },
+  peek: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: 4 },
   metric: { flex: 1, minWidth: 110, paddingVertical: 10, paddingHorizontal: 14 },
   charges: { backgroundColor: party.lime },
   copy: { gap: 4 },

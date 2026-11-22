@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { Stack } from 'expo-router';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { RoomView } from '../../../shared/protocol';
 import { fieldStyles, MenuPaper, party, TrackStripe } from '../ui/Menu';
@@ -13,7 +12,6 @@ export function Dispersal({ room, bluetoothStatus }: { room: RoomView; bluetooth
   }, [offset]);
   const seconds = Math.max(0, Math.ceil(((room.countdownEndsAt ?? now) - now) / 1000));
   return <ScrollView style={fieldStyles.page} contentContainerStyle={s.content}>
-    <Stack.Screen options={{ headerShown: true, title: 'Dispersal' }} />
     <View style={s.banner}>
       <MenuPaper />
       <Text accessibilityRole="header" style={fieldStyles.title}>Spread out!</Text>

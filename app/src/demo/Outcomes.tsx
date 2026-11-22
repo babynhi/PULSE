@@ -33,7 +33,7 @@ export function Zone() {
   const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
   const shrinks = Math.min(5, Math.floor(elapsed / interval));
   const remainingRadius = Math.pow(0.8, shrinks);
-  const radius = Math.round(settings.zoneRadiusM * remainingRadius);
+  const radius = Math.round(settings.zoneStartRadiusM * remainingRadius);
   const nextShrink = interval - elapsed % interval;
   const warning = settings.zoneEnabled && shrinks < 5 && nextShrink <= settings.zoneWarningSec;
   return <View style={[fieldStyles.panel, s.zone, warning && s.zoneWarning]}>

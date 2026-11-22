@@ -2,7 +2,7 @@ import { useHeaderHeight } from 'expo-router/react-navigation';
 import { type ComponentRef, useEffect, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { SETTING_LIMITS, type Settings } from '../../../shared/protocol';
+import { PING_INTERVAL_MS, SETTING_LIMITS, ZONE_WARNING_MS, type Settings } from '../../../shared/protocol';
 import type { DemoSettings } from '../demo/settings';
 import { formatDuration } from '../ui/formatDuration';
 import {
@@ -18,6 +18,7 @@ const groups: Record<Group, Field[]> = {
   Round: [
     { key: 'durationSec', label: 'Round duration', unit: 'min', factor: 60 },
     { key: 'disperseSec', label: 'Dispersal countdown', unit: 'sec' },
+    { key: 'maxPlayers', label: 'Player limit', unit: 'players' },
   ],
   'Roles and actions': [
     { key: 'infectedCount', label: 'Starting infected', unit: 'players' },
@@ -27,10 +28,10 @@ const groups: Record<Group, Field[]> = {
     { key: 'immunitySec', label: 'Post-heal immunity', unit: 'sec', doctorOnly: true },
   ],
   'Map and boundary': [
-    { key: 'zoneRadiusM', label: 'Starting radius', unit: 'm', limits: [1, 10000] },
-    { key: 'zoneShrinkSec', label: 'Shrink interval', unit: 'sec', limits: [1, 3600] },
+    { key: 'zoneStartRadiusM', label: 'Starting radius', unit: 'm' },
+    { key: 'zoneShrinkSec', label: 'Shrink interval', unit: 'sec' },
     { key: 'zoneWarningSec', label: 'Shrink warning', unit: 'sec', limits: [0, 3600] },
-    { key: 'zoneGraceSec', label: 'Time to return', unit: 'sec', limits: [1, 300] },
+    { key: 'zoneGraceSec', label: 'Time to return', unit: 'sec' },
   ],
   'Radar and connection': [
     { key: 'pingIntervalSec', label: 'Ping interval', unit: 'sec', limits: [1, 3600] },
@@ -48,12 +49,12 @@ function summary(group: Group, v: Values) {
       return v.infectedCount + ' infected · ' + (v.doctorEnabled
         ? 'Doctor with ' + v.healCharges + (v.healCharges === 1 ? ' heal' : ' heals') : 'Doctor off');
     case 'Map and boundary':
-      if (v.zoneRadiusM === undefined) return 'Open play · No GPS boundary';
+      if (v.zoneStartRadiusM === undefined) return 'Open play · No GPS boundary';
       return v.zoneEnabled && v.zoneShrinkSec !== undefined
-        ? v.zoneRadiusM + ' m radius · shrinks every ' + formatDuration(v.zoneShrinkSec) : 'Boundary off';
+        ? v.zoneStartRadiusM + ' m radius · shrinks every ' + formatDuration(v.zoneShrinkSec) : 'Boundary off';
     case 'Radar and connection':
-      return (v.pingIntervalSec === undefined ? 'Bluetooth · ' : 'Pings every ' + formatDuration(v.pingIntervalSec) + ' · ') +
-        formatDuration(v.reconnectSec) + ' to reconnect';
+      return 'Pings every ' + formatDuration(v.pingIntervalSec ?? PING_INTERVAL_MS / 1000) +
+        ' · ' + formatDuration(v.reconnectSec) + ' to reconnect';
   }
 }
 
@@ -61,6 +62,8 @@ type SettingsProps = {
   settings: Values;
   canEdit: boolean;
   maxStartingInfected?: number;
+  settingsVersion?: number;
+  changedKeys?: (keyof Settings)[];
   onSave: (patch: Partial<Values>) => Promise<void> | void;
   onClose: () => void;
 };
@@ -70,7 +73,7 @@ export function RoomSettingsForm(props: SettingsProps) {
   return <SettingsEditor key={props.canEdit ? 'host' : 'guest'} {...props} />;
 }
 
-function SettingsEditor({ settings, canEdit, maxStartingInfected, onSave, onClose }: SettingsProps) {
+function SettingsEditor({ settings, canEdit, maxStartingInfected, settingsVersion, changedKeys, onSave, onClose }: SettingsProps) {
   const [active, setActive] = useState<Group | null>(null);
   const [draft, setDraft] = useState<Partial<Record<NumberKey, string>>>({});
   const [switches, setSwitches] = useState<Partial<Pick<Settings, 'doctorEnabled' | 'zoneEnabled'>>>({});
@@ -80,6 +83,13 @@ function SettingsEditor({ settings, canEdit, maxStartingInfected, onSave, onClos
   const inputs = useRef<Partial<Record<NumberKey, ComponentRef<typeof TextInput> | null>>>({});
   const mounted = useRef(true);
   const headerHeight = useHeaderHeight();
+  const [seenVersion, setSeenVersion] = useState(settingsVersion);
+  useEffect(() => {
+    if (canEdit || seenVersion === settingsVersion) return;
+    const timer = setTimeout(() => setSeenVersion(settingsVersion), 2000);
+    return () => clearTimeout(timer);
+  }, [canEdit, seenVersion, settingsVersion]);
+  const highlights: (keyof Values)[] = !canEdit && seenVersion !== settingsVersion ? changedKeys ?? [] : [];
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
@@ -92,10 +102,11 @@ function SettingsEditor({ settings, canEdit, maxStartingInfected, onSave, onClos
   const patch: Partial<Values> = {};
   if (next.doctorEnabled !== settings.doctorEnabled) patch.doctorEnabled = next.doctorEnabled;
   if (next.zoneEnabled !== settings.zoneEnabled) patch.zoneEnabled = next.zoneEnabled;
-  const hasMap = settings.zoneRadiusM !== undefined;
+  const hasMap = settings.zoneStartRadiusM !== undefined;
   function fields(group: Group) {
     if (group === 'Map and boundary' && !next.zoneEnabled) return [];
-    return groups[group].filter(field => settings[field.key] !== undefined && (!field.doctorOnly || next.doctorEnabled));
+    return groups[group].filter(field => settings[field.key] !== undefined && (!field.doctorOnly || next.doctorEnabled)
+      && (field.key !== 'maxPlayers' || maxStartingInfected === undefined));
   }
   let invalid: FieldError | undefined;
   for (const group of groupNames) {
@@ -150,7 +161,7 @@ function SettingsEditor({ settings, canEdit, maxStartingInfected, onSave, onClos
     return canEdit ? <FieldToggle label={label} value={next[key]} onValueChange={value => {
       changed();
       setSwitches(previous => ({ ...previous, [key]: value }));
-    }} /> : <View style={[fieldStyles.row, s.row]}><Text style={fieldStyles.label}>{label}</Text>
+    }} /> : <View style={[fieldStyles.row, s.row, highlights.includes(key) && s.highlight]}><Text style={fieldStyles.label}>{label}</Text>
       <Text style={fieldStyles.body}>{next[key] ? 'On' : 'Off'}</Text></View>;
   }
 
@@ -163,20 +174,25 @@ function SettingsEditor({ settings, canEdit, maxStartingInfected, onSave, onClos
           {!canEdit && <Text style={fieldStyles.muted}>Only the host can edit these settings.</Text>}
           {groupNames.map(group => {
             const open = active === group;
-            return <View key={group} style={fieldStyles.panel}>
+            const groupChanged = groups[group].some(field => highlights.includes(field.key)) ||
+              (group === 'Roles and actions' && highlights.includes('doctorEnabled')) ||
+              (group === 'Map and boundary' && highlights.includes('zoneEnabled'));
+            return <View key={group} style={[fieldStyles.panel, !open && groupChanged && s.highlight]}>
               <FieldDisclosure label={group} summary={open ? undefined : summary(group, next)} expanded={open}
                 onPress={() => setActive(open ? null : group)} />
               {open && <View style={s.fields}>
                 {group === 'Map and boundary' && (hasMap ? toggle('Use GPS boundary', 'zoneEnabled')
                   : <Text style={fieldStyles.body}>Agree on a play area together before you start. This room uses open play.</Text>)}
                 {group === 'Radar and connection' && settings.pingIntervalSec === undefined &&
-                  <Text style={fieldStyles.body}>Bluetooth picks up nearby players while PULSE is open.</Text>}
+                  <Text style={fieldStyles.body}>Bluetooth detects nearby players. The map shows approximate positions every {formatDuration(PING_INTERVAL_MS / 1000)}.</Text>}
+                {group === 'Map and boundary' && hasMap && next.zoneEnabled && settings.zoneWarningSec === undefined &&
+                  <Text style={fieldStyles.body}>The boundary warning appears {formatDuration(ZONE_WARNING_MS / 1000)} before each shrink.</Text>}
                 {group === 'Roles and actions' && toggle('Include Doctor', 'doctorEnabled')}
                 {fields(group).map(field => {
                   const value = draft[field.key] ?? String(settings[field.key]! / (field.factor ?? 1));
                   const message = error?.key === field.key ? error.message : undefined;
                   return <View key={field.key}>
-                    <View style={[fieldStyles.row, s.row]}>
+                    <View style={[fieldStyles.row, s.row, highlights.includes(field.key) && s.highlight]}>
                       <Text style={[fieldStyles.label, s.fieldLabel]}>{field.label}</Text>
                       <View style={s.number}>{canEdit ?
                         <TextInput ref={node => { inputs.current[field.key] = node; }} accessibilityHint={message}
@@ -215,6 +231,7 @@ const s = StyleSheet.create({
   number: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   input: { width: 78, textAlign: 'center', paddingHorizontal: 4 },
   invalid: { borderColor: party.alert },
+  highlight: { backgroundColor: party.lime },
   footer: { borderTopWidth: StyleSheet.hairlineWidth, borderColor: party.line, backgroundColor: party.paper },
   footerAction: { width: '100%', maxWidth: fieldStyles.content.maxWidth, alignSelf: 'center', padding: menuActionLayout.inset, gap: 8 },
 });

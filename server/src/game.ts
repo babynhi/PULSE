@@ -23,7 +23,29 @@ import {
     Settings,
     Team,
     Zone,
+    ZoneView,
+    LatLng,
+    AllyPos,
+    ZONE_SHRINK_FACTOR,
+    ZONE_MIN_RADIUS_M,
+    ZONE_WARNING_MS,
+    PING_INTERVAL_MS,
 } from '../../shared/protocol';
+
+/** A GPS fix older than this is treated as unknown (never counts as "outside"). */
+export const LOC_STALE_MS = 30_000;
+/** If nobody has a fix this long into the round, the zone is turned off for the round. */
+export const ZONE_FIX_WAIT_MS = 30_000;
+/** Pings are fuzzed by a random distance in this range (metres). */
+export const PING_FUZZ_M: [number, number] = [10, 20];
+
+interface ZoneState {
+    center: LatLng;
+    radiusM: number;
+    nextRadiusM: number | null;
+    shrinksAt: number | null;
+    warnedFor: number | null;
+}
 
 export class GameError extends Error { }
 
@@ -51,6 +73,7 @@ export interface Player {
     bites: number;
     heals: number;
     timesCured: number;
+    outsideZoneSince: number | null;
 }
 
 interface Hold {
@@ -89,6 +112,14 @@ export class Room {
     debugProx = new Map<string, Zone>();
     botRoam = false;
     private lastBotStep = 0;
+    /** latest GPS fix per player */
+    positions = new Map<string, LatLng & { at: number }>();
+    zone: ZoneState | null = null;
+    /** waiting for the first GPS fix to place the zone */
+    private zonePending = false;
+    /** last ping: playerId -> fuzzed position */
+    pings = new Map<string, LatLng>();
+    pingAt: number | null = null;
     /** set whenever something visible changed; index.ts re-broadcasts and clears it */
     dirty = true;
 
@@ -131,6 +162,7 @@ export class Room {
             bites: 0,
             heals: 0,
             timesCured: 0,
+            outsideZoneSince: null,
         };
         this.players.set(playerId, p);
         if (!this.hostId) this.hostId = playerId;
@@ -311,8 +343,10 @@ export class Room {
                 bites: 0,
                 heals: 0,
                 timesCured: 0,
+                outsideZoneSince: null,
             });
         });
+        this.resetZone();
         this.events = [];
         this.result = null;
         this.prox.clear();
@@ -342,6 +376,7 @@ export class Room {
             Object.assign(p, { ready: p.isBot, role: null, startRole: null, status: 'active', bleId: 0 });
         }
         this.phase = 'lobby';
+        this.resetZone();
         this.countdownEndsAt = this.startedAt = this.endsAt = null;
         this.result = null;
         this.dirty = true;
@@ -376,6 +411,8 @@ export class Room {
             this.phase = 'playing';
             this.startedAt = now;
             this.endsAt = now + this.settings.durationSec * 1000;
+            this.zonePending = this.settings.zoneEnabled;
+            this.pingAt = null;
             this.dirty = true;
         }
         if (this.phase !== 'playing') return;
@@ -396,6 +433,9 @@ export class Room {
         this.stepBots(now);
         this.stepHolds(now);
         if (this.phase !== 'playing') return;
+        this.stepZone(now);
+        if (this.phase !== 'playing') return;
+        this.stepPing(now);
 
         if (this.endsAt !== null && now >= this.endsAt) {
             const survivors = this.active().filter((p) => p.role !== 'infected');
@@ -584,8 +624,8 @@ export class Room {
         this.cancelAction(target.id, 'You were infected');
         this.events.push({ t: now - (this.startedAt ?? now), kind: 'bite', actor: actor.name, target: target.name });
         this.out.actionEnd(actor.id, { kind: 'bite', ok: true });
-        this.out.notice(actor.id, { kind: 'biteLanded', text: 'Bite landed! They’re one of you now.' });
-        this.out.notice(target.id, { kind: 'youWereInfected', text: 'You’ve been bitten. You are INFECTED.' });
+        this.out.notice(actor.id, { kind: 'biteLanded', text: 'Infection landed! They’re one of you now.' });
+        this.out.notice(target.id, { kind: 'youWereInfected', text: 'You’ve been infected. You are INFECTED.' });
         this.dirty = true;
         if (wasDoctor) this.end('infected', 'The doctor was infected', now);
         else this.checkVictory(now);
@@ -683,7 +723,174 @@ export class Room {
         }
     }
 
+    // ---------- location, safe zone, pings ----------
+
+    reportLoc(playerId: string, loc: { lat?: unknown; lng?: unknown; acc?: unknown }, now: number) {
+        const p = this.players.get(playerId);
+        if (!p || p.status !== 'active' || (this.phase !== 'playing' && this.phase !== 'countdown')) return;
+        const lat = Number(loc?.lat), lng = Number(loc?.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
+        if (lat === 0 && lng === 0) return; // "null island": a broken fix, not a real place
+        const acc = loc?.acc === undefined ? 0 : Number(loc.acc);
+        if (!Number.isFinite(acc) || acc < 0 || acc > 500) return; // too vague to judge zone edges
+        this.positions.set(playerId, { lat, lng, at: now });
+        // Live ally pins change for infected viewers.
+        if (p.role === 'infected') this.dirty = true;
+    }
+
+    private fix(playerId: string, now: number) {
+        const f = this.positions.get(playerId);
+        return f && now - f.at <= LOC_STALE_MS ? f : null;
+    }
+
+    private resetZone() {
+        this.positions.clear();
+        this.zone = null;
+        this.zonePending = false;
+        this.pings.clear();
+        this.pingAt = null;
+        for (const p of this.players.values()) p.outsideZoneSince = null;
+    }
+
+    private placeZone(now: number) {
+        const fixes = this.active().map((p) => this.fix(p.id, now)).filter((f): f is LatLng & { at: number } => !!f);
+        let center: LatLng | null = null;
+        if (fixes.length) {
+            center = {
+                lat: fixes.reduce((a, f) => a + f.lat, 0) / fixes.length,
+                lng: fixes.reduce((a, f) => a + f.lng, 0) / fixes.length,
+            };
+        } else {
+            const h = this.fix(this.hostId, now);
+            if (h) center = { lat: h.lat, lng: h.lng };
+        }
+        if (!center) return false;
+        const r = this.settings.zoneStartRadiusM;
+        this.zone = {
+            center,
+            radiusM: r,
+            nextRadiusM: Math.max(ZONE_MIN_RADIUS_M, Math.round(r * ZONE_SHRINK_FACTOR)),
+            shrinksAt: now + this.settings.zoneShrinkSec * 1000,
+            warnedFor: null,
+        };
+        // Debug bots get a spot inside the zone so pings and the map have something to show.
+        if (this.debugEnabled) {
+            for (const b of this.active().filter((p) => p.isBot)) {
+                this.positions.set(b.id, { ...offsetMeters(center, this.rng() * r * 0.6, this.rng() * 360), at: now });
+            }
+        }
+        this.dirty = true;
+        return true;
+    }
+
+    private stepZone(now: number) {
+        if (this.zonePending) {
+            if (this.placeZone(now)) this.zonePending = false;
+            else if (now - (this.startedAt ?? now) >= ZONE_FIX_WAIT_MS) {
+                this.zonePending = false;
+                for (const p of this.players.values())
+                    this.out.notice(p.id, { kind: 'info', text: 'No GPS from anyone, so the safe zone is off this round.' });
+            }
+        }
+        const z = this.zone;
+        if (!z) return;
+        // keep debug bots' fixes fresh
+        if (this.debugEnabled) for (const b of this.active().filter((p) => p.isBot)) {
+            const f = this.positions.get(b.id);
+            if (f) f.at = now;
+        }
+        if (z.shrinksAt !== null) {
+            if (z.warnedFor !== z.shrinksAt && z.shrinksAt - now <= ZONE_WARNING_MS) {
+                z.warnedFor = z.shrinksAt;
+                for (const p of this.active()) this.out.notice(p.id, { kind: 'info', text: 'The safe zone shrinks in 30 seconds!' });
+                this.dirty = true;
+            }
+            if (now >= z.shrinksAt) {
+                z.radiusM = z.nextRadiusM ?? z.radiusM;
+                const next = Math.max(ZONE_MIN_RADIUS_M, Math.round(z.radiusM * ZONE_SHRINK_FACTOR));
+                z.nextRadiusM = z.radiusM > ZONE_MIN_RADIUS_M ? next : null;
+                z.shrinksAt = z.nextRadiusM !== null ? now + this.settings.zoneShrinkSec * 1000 : null;
+                this.dirty = true;
+            }
+        }
+        const graceMs = this.settings.zoneGraceSec * 1000;
+        for (const p of this.active()) {
+            if (p.isBot) continue; // debug bots have made-up positions
+            const f = this.fix(p.id, now);
+            if (!f) continue; // no fresh fix: unknown, never punished
+            const outside = distanceMeters(f, z.center) > z.radiusM;
+            if (outside && p.outsideZoneSince === null) {
+                p.outsideZoneSince = now;
+                this.out.notice(p.id, { kind: 'info', text: `You left the safe zone! Get back in within ${this.settings.zoneGraceSec}s.` });
+                this.dirty = true;
+            } else if (!outside && p.outsideZoneSince !== null) {
+                p.outsideZoneSince = null;
+                this.dirty = true;
+            } else if (outside && p.outsideZoneSince !== null && now - p.outsideZoneSince >= graceMs) {
+                p.outsideZoneSince = null;
+                this.eliminate(p, now, 'You stayed outside the safe zone');
+                if (this.phase !== 'playing') return;
+            }
+        }
+    }
+
+    private stepPing(now: number) {
+        if (this.pingAt !== null && now - this.pingAt < PING_INTERVAL_MS) return;
+        if (this.pingAt === null && now - (this.startedAt ?? now) < PING_INTERVAL_MS) return; // first ping after 30 s
+        this.pingAt = now;
+        this.pings.clear();
+        for (const p of this.active()) {
+            const f = this.fix(p.id, now);
+            if (!f) continue;
+            const [lo, hi] = PING_FUZZ_M;
+            this.pings.set(p.id, offsetMeters(f, lo + this.rng() * (hi - lo), this.rng() * 360));
+        }
+        this.dirty = true;
+    }
+
     // ---------- views ----------
+
+    private zoneView(now: number): ZoneView {
+        const z = this.zone!;
+        return {
+            center: z.center,
+            radiusM: z.radiusM,
+            nextRadiusM: z.nextRadiusM,
+            shrinksAt: z.shrinksAt,
+            warning: z.shrinksAt !== null && z.shrinksAt - now <= ZONE_WARNING_MS,
+        };
+    }
+
+    /** Fellow infected positions: only for an active infected viewer during play. */
+    private alliesFor(me: Player | undefined, now: number): AllyPos[] {
+        if (!me || this.phase !== 'playing' || me.role !== 'infected' || me.status !== 'active') return [];
+        const out: AllyPos[] = [];
+        for (const p of this.active()) {
+            if (p.id === me.id || p.role !== 'infected') continue;
+            const f = this.fix(p.id, now);
+            if (f) out.push({ id: p.id, name: p.name, lat: f.lat, lng: f.lng });
+        }
+        return out;
+    }
+
+    /**
+     * Role-based map: survivors (innocent, doctor) see the auto-ping of every other active player,
+     * anonymous and fuzzed. Infected never get pings, only live ally pins (see alliesFor).
+     * Uses the viewer's role right now, so a bite or a cure switches the map at once.
+     */
+    private pingsVisibleTo(me: Player | undefined) {
+        return !!me && this.phase === 'playing' && me.status === 'active' && me.role !== null && me.role !== 'infected';
+    }
+
+    private pingsFor(me: Player | undefined): LatLng[] {
+        if (!this.pingsVisibleTo(me)) return [];
+        const out: LatLng[] = [];
+        for (const [id, l] of this.pings) {
+            if (id === me!.id || this.players.get(id)?.status !== 'active') continue;
+            out.push({ lat: l.lat, lng: l.lng });
+        }
+        return out;
+    }
 
     viewFor(playerId: string, now: number): RoomView {
         const me = this.players.get(playerId);
@@ -733,12 +940,19 @@ export class Room {
                         healsLeft: me.healsLeft,
                         immuneUntil: me.immuneUntil,
                         status: me.status,
+                        outsideZoneSince: me.outsideZoneSince,
+                        graceEndsAt:
+                            me.outsideZoneSince !== null ? me.outsideZoneSince + this.settings.zoneGraceSec * 1000 : null,
                     }
                     : null,
             radar: radar.sort((a, b) => a.bleId - b.bleId),
             debugProx,
             debugEnabled: this.debugEnabled,
             result: this.result,
+            zone: this.phase === 'playing' && this.zone ? this.zoneView(now) : null,
+            allies: this.alliesFor(me, now),
+            pings: this.pingsFor(me),
+            pingAt: this.pingsVisibleTo(me) ? this.pingAt : null,
         };
     }
 }
@@ -761,3 +975,25 @@ function shuffle<T>(arr: T[], rng: () => number): T[] {
 }
 
 export { makeRoomCode } from '../../shared/roomCode';
+
+const EARTH_R = 6_371_000;
+const rad = (d: number) => (d * Math.PI) / 180;
+
+/** Great-circle distance in metres. */
+export function distanceMeters(a: LatLng, b: LatLng): number {
+    const dLat = rad(b.lat - a.lat);
+    const dLng = rad(b.lng - a.lng);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return 2 * EARTH_R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/** The point `meters` away from `from` in compass direction `bearingDeg`. */
+export function offsetMeters(from: LatLng, meters: number, bearingDeg: number): LatLng {
+    const d = meters / EARTH_R;
+    const br = rad(bearingDeg);
+    const lat1 = rad(from.lat);
+    const lng1 = rad(from.lng);
+    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(br));
+    const lng2 = lng1 + Math.atan2(Math.sin(br) * Math.sin(d) * Math.cos(lat1), Math.cos(d) - Math.sin(lat1) * Math.sin(lat2));
+    return { lat: (lat2 * 180) / Math.PI, lng: (lng2 * 180) / Math.PI };
+}

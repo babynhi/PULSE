@@ -1,11 +1,11 @@
 import { Stack } from 'expo-router';
-import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { PublicPlayer, Settings } from '../../../shared/protocol';
 import { FieldChoice, fieldStyles, MenuItem, MenuPaper, menuActionLayout, party, TrackStripe } from '../ui/Menu';
 import { formatDuration } from '../ui/formatDuration';
 
-type LobbyPlayer = Pick<PublicPlayer, 'id' | 'name' | 'isHost' | 'ready' | 'connected'>;
+type LobbyPlayer = Pick<PublicPlayer, 'id' | 'name' | 'isHost' | 'ready' | 'connected'> & Partial<Pick<PublicPlayer, 'isBot'>>;
 
 interface LobbyProps {
   roomCode: string;
@@ -15,11 +15,15 @@ interface LobbyProps {
   onSettings: () => void;
   onReady: (ready: boolean) => void;
   onShare?: () => void;
+  onLeave?: () => void;
+  onManage?: () => void;
+  readyDisabled?: boolean;
   messages?: string[];
   error?: string;
 }
 
-export function Lobby({ roomCode, youId, players, settings, onSettings, onReady, onShare, messages, error }: LobbyProps) {
+export function Lobby({ roomCode, youId, players, settings, onSettings, onReady, onShare, onLeave,
+  onManage, readyDisabled, messages, error }: LobbyProps) {
   const { height } = useWindowDimensions();
   const compact = height < 640;
   const self = players.find(player => player.id === youId);
@@ -28,7 +32,12 @@ export function Lobby({ roomCode, youId, players, settings, onSettings, onReady,
 
   return (
     <View style={fieldStyles.page}>
-      <Stack.Screen options={{ headerShown: true, title: 'PULSE lobby' }} />
+      <Stack.Screen options={{ headerShown: true, title: 'PULSE lobby', ...(onLeave && {
+        headerBackVisible: false, gestureEnabled: false, headerRight: () =>
+          <Pressable accessibilityRole="button" accessibilityLabel="Leave room" style={s.textButton} onPress={onLeave}>
+            <Text style={fieldStyles.label}>Leave</Text>
+          </Pressable>,
+      }) }} />
       <TrackStripe />
       <SafeAreaView edges={['left', 'right']} style={fieldStyles.page}>
         <ScrollView contentContainerStyle={[s.content, compact && s.compactContent]}>
@@ -53,9 +62,14 @@ export function Lobby({ roomCode, youId, players, settings, onSettings, onReady,
           </View>
 
           <View style={[s.roster, compact && s.compactRoster]}>
-            <Text accessibilityRole="header" style={fieldStyles.heading}>Players</Text>
+            <View style={s.sectionRow}>
+              <Text accessibilityRole="header" style={fieldStyles.heading}>Players</Text>
+              {onManage && <Pressable accessibilityRole="button" accessibilityLabel="Manage players" style={s.textButton} onPress={onManage}>
+                <Text style={fieldStyles.label}>Manage</Text>
+              </Pressable>}
+            </View>
             {players.map(player => {
-              const identity = [player.id === youId && 'you', player.isHost && 'host'].filter(Boolean).join(', ');
+              const identity = [player.id === youId && 'you', player.isHost && 'host', player.isBot && !/^bot/i.test(player.name) && 'bot'].filter(Boolean).join(', ');
               return (
                 <View key={player.id} style={[s.playerRow, compact && s.compactPlayerRow]}>
                   <Text style={s.playerName}>{player.name}
@@ -78,7 +92,7 @@ export function Lobby({ roomCode, youId, players, settings, onSettings, onReady,
           <MenuPaper />
           <View style={s.action}>
             {error ? <Text accessibilityRole="alert" style={fieldStyles.error}>{error}</Text> : null}
-            <MenuItem label={self?.ready ? 'Undo ready' : 'Ready'} secondary={self?.ready} disabled={!self?.connected}
+            <MenuItem label={self?.ready ? 'Undo ready' : 'Ready'} secondary={self?.ready} disabled={!self?.connected || readyDisabled}
               onPress={() => onReady(!self?.ready)} />
           </View>
         </SafeAreaView>
@@ -92,6 +106,7 @@ const s = StyleSheet.create({
   compactContent: { gap: 12, paddingVertical: 10 },
   sectionRow: { ...fieldStyles.row, justifyContent: 'space-between', gap: 12 },
   codeBlock: { flexShrink: 1 },
+  textButton: { minHeight: 44, minWidth: 44, justifyContent: 'center', alignItems: 'center' },
   code: { ...fieldStyles.title, letterSpacing: 4 },
   round: { ...fieldStyles.row, borderTopWidth: StyleSheet.hairlineWidth, borderColor: party.line, paddingTop: 14, gap: 12 },
   compactRound: { paddingTop: 6 },

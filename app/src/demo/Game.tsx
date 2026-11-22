@@ -107,7 +107,8 @@ export default function Game({ name, onEnd }: { name: string; onEnd: (result: De
     }, durationMs);
   }
 
-  return <RoundScreen me={{ bleId: 0, role, roleAcked: acked, healsLeft: settings.healCharges - heals, status: 'active', immuneUntil: 0 }}
+  return <RoundScreen me={{ bleId: 0, role, roleAcked: acked, healsLeft: settings.healCharges - heals, status: 'active', immuneUntil: 0,
+    outsideZoneSince: null, graceEndsAt: null }}
     name={name} radar={radar} settings={settings} endsAt={endsAt} clockOffset={0} onRoleAck={() => setAcked(true)}
     onStartAction={begin} onCancelAction={cancel} actionProgress={progress} feedback={feedback} zone={<Zone />} />;
 }

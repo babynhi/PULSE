@@ -20,7 +20,8 @@ export function LiveRecap({ result, name, onReplay }: { result: GameResult; name
     totals={[[result.infectedTotal, 'Bites'], [result.curedTotal, 'Cures'], [result.eliminatedTotal, 'Eliminated']]}
     standings={result.standings.map(player => ({
       name: player.name + (player.name === name ? ' (you)' : ''),
-      status: player.status === 'eliminated' ? 'Eliminated' : player.finalRole,
+      status: [player.startRole !== player.finalRole ? player.startRole + ' → ' + player.finalRole : player.finalRole,
+        player.status === 'eliminated' && 'Eliminated'].filter(Boolean).join(' · '),
     }))} onReplay={onReplay} />;
 }
 
