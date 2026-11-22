@@ -607,17 +607,16 @@ The game should display:
 * Number of eliminated players.  
 * Final player standings.
 
-### **Planned Feature: Infection Tree**
+### **Infection Tree**
 
-A future recap screen should visualize:
+The round recap shows how infection spread:
 
-* Who infected whom.  
-* When each infection occurred.  
-* Which players were cured.  
-* Who survived.  
-* The overall infection progression.
+* Each player who started infected anchors a tree. Branches connect each successful bite to the player it infected.
+* Screen reader labels include bite times. Cures are marked on the corresponding infection, and a reinfection gets its own branch.
+* The summary card identifies the doctor. If bitten, the doctor is also marked on their branch. Cured players show who healed them.
+* Final standings show who survived and each player's final role.
 
-Players should be able to share a game recap card.
+Sharing a game recap card is planned.
 
 Any player can bring the group back to the same lobby for a rematch. Players mark themselves ready again before it starts.
 

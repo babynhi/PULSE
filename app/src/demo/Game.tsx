@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Haptics from 'expo-haptics';
-import type { ActionProgress, RadarEntry, Role, Team, Zone as Distance } from '../../../shared/protocol';
+import type { ActionProgress, GameEvent, RadarEntry, Role, Team, Zone as Distance } from '../../../shared/protocol';
 import { RoundScreen } from '../rooms/LiveRound';
 import { Zone } from './Outcomes';
 import { useDemoSettings } from './settings';
@@ -8,12 +8,14 @@ import { useDemoSettings } from './settings';
 export interface DemoResult {
   name: string;
   role: Role;
+  startRole: Role;
   winner: Team;
   bites: number;
   heals: number;
   elapsedSec: number;
   reason: string;
-  standings: { name: string; role: Role }[];
+  standings: { name: string; role: Role; startRole: Role }[];
+  events: GameEvent[];
 }
 
 const companions = ['Mara', 'Jules', 'Remy'];
@@ -23,7 +25,9 @@ export default function Game({ name, onEnd }: { name: string; onEnd: (result: De
   const { settings } = useDemoSettings();
   const [start] = useState(Date.now);
   const [now, setNow] = useState(Date.now);
-  const [deck, setDeck] = useState<Role[]>(() => {
+  const [companionNames] = useState(() => companions.map(companion =>
+    companion.toLowerCase() === name.toLowerCase() ? `${companion} 2` : companion));
+  const [startingDeck] = useState<Role[]>(() => {
     const cards: Role[] = Array<Role>(settings.infectedCount).fill('infected');
     if (settings.doctorEnabled) cards.push('doctor');
     while (cards.length <= companions.length) cards.push('innocent');
@@ -33,6 +37,7 @@ export default function Game({ name, onEnd }: { name: string; onEnd: (result: De
     }
     return cards;
   });
+  const [deck, setDeck] = useState(startingDeck);
   const role = deck[0];
   const [acked, setAcked] = useState(false);
   const [bites, setBites] = useState(0);
@@ -41,6 +46,7 @@ export default function Game({ name, onEnd }: { name: string; onEnd: (result: De
   const [progress, setProgress] = useState<ActionProgress | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ended = useRef(false);
+  const events = useRef<GameEvent[]>([]);
   const endsAt = start + settings.durationSec * 1000;
 
   useEffect(() => {
@@ -52,10 +58,11 @@ export default function Game({ name, onEnd }: { name: string; onEnd: (result: De
     if (ended.current) return;
     ended.current = true;
     if (timer.current) clearTimeout(timer.current);
-    onEnd({ name, role: finalDeck[0], winner, reason, bites: finalBites, heals: finalHeals,
+    onEnd({ name, role: finalDeck[0], startRole: startingDeck[0], winner, reason, bites: finalBites, heals: finalHeals,
       elapsedSec: Math.min(settings.durationSec, Math.floor((Date.now() - start) / 1000)),
-      standings: companions.map((playerName, i) => ({ name: playerName, role: finalDeck[i + 1] })) });
-  }, [name, onEnd, settings.durationSec, start]);
+      standings: companionNames.map((playerName, i) => ({ name: playerName, role: finalDeck[i + 1], startRole: startingDeck[i + 1] })),
+      events: [...events.current] });
+  }, [name, onEnd, settings.durationSec, start, companionNames, startingDeck]);
 
   useEffect(() => {
     if (now >= endsAt) finish('survivors', 'Time ran out with survivors left.', deck, bites, heals);
@@ -64,7 +71,7 @@ export default function Game({ name, onEnd }: { name: string; onEnd: (result: De
   function distanceFor(id: number, time: number) {
     return distances[(id - 1 + Math.floor((time - start) / 12000)) % distances.length];
   }
-  const radar: RadarEntry[] = companions.map((companion, i) => {
+  const radar: RadarEntry[] = companionNames.map((companion, i) => {
     const ally = role === 'infected' && deck[i + 1] === 'infected';
     return { bleId: i + 1, ally, zone: distanceFor(i + 1, now), name: ally ? companion : undefined };
   });
@@ -88,10 +95,12 @@ export default function Game({ name, onEnd }: { name: string; onEnd: (result: De
     timer.current = setTimeout(() => {
       timer.current = null;
       setProgress(null);
-      if (ended.current || Date.now() >= endsAt) return;
-      if (distanceFor(id, Date.now()) !== 'HOT') { setFeedback('Signal moved out of reach.'); return; }
+      const completedAt = Date.now();
+      if (ended.current || completedAt >= endsAt) return;
+      if (distanceFor(id, completedAt) !== 'HOT') { setFeedback('Signal moved out of reach.'); return; }
       const next = [...deck];
       next[id] = kind === 'heal' ? 'innocent' : 'infected';
+      events.current.push({ kind, t: completedAt - start, actor: name, target: companionNames[id - 1] });
       setDeck(next);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       if (kind === 'heal') {

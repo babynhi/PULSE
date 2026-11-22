@@ -55,9 +55,9 @@ export function Recap({ result, onReplay }: { result: DemoResult; onReplay: () =
   return <RoundRecap winner={result.winner} reason={result.reason} role={result.role} durationSec={result.elapsedSec}
     totals={[[result.bites, 'Your bites'], [result.heals, 'Your cures']]}
     standings={[
-      { name: result.name + ' (you)', status: result.role },
-      ...result.standings.map(player => ({ name: player.name, status: player.role })),
-    ]} onReplay={onReplay} />;
+      { name: result.name, startRole: result.startRole, status: result.role },
+      ...result.standings.map(player => ({ name: player.name, startRole: player.startRole, status: player.role })),
+    ]} events={result.events} viewer={result.name} onReplay={onReplay} />;
 }
 
 const s = StyleSheet.create({
