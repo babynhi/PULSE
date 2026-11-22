@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Dimensions, Easing, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { router, Stack } from 'expo-router';
+import { clearLastNotice, useGameStore } from '../net/client';
 import { useFonts, GreatVibes_400Regular } from '@expo-google-fonts/great-vibes';
 import { IMFellEnglishSC_400Regular } from '@expo-google-fonts/im-fell-english-sc';
 
@@ -21,6 +22,7 @@ export default function Home() {
   const [fontsLoaded] = useFonts({ GreatVibes_400Regular, IMFellEnglishSC_400Regular });
   const beat = useHeartbeat();
   const redOpacity = beat.interpolate({ inputRange: [0, 1], outputRange: [0, 0.85] });
+  const { lastNotice } = useGameStore();
 
   return (
     <View style={s.screen}>
@@ -45,6 +47,11 @@ export default function Home() {
           ))}
           <Image source={require('../../assets/pulse/divider.png')} style={[s.divider, { transform: [{ scaleY: -1 }] }]} />
         </View>
+        {lastNotice !== '' && (
+          <Pressable onPress={clearLastNotice} style={s.notice}>
+            <Text style={s.noticeText}>{lastNotice}</Text>
+          </Pressable>
+        )}
       </View>
     </View>
   );
@@ -164,4 +171,6 @@ const s = StyleSheet.create({
   hidden: { opacity: 0 },
 
   mote: { position: 'absolute', backgroundColor: '#e6e6e6' },
+  notice: { marginTop: 24, marginHorizontal: 24, padding: 12, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.7)', borderWidth: 1, borderColor: '#e63946' },
+  noticeText: { color: '#f2f2f2', fontSize: 15, textAlign: 'center' },
 });

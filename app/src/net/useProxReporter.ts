@@ -3,12 +3,15 @@
  * everyone else, and report HOT/WARM/COLD to the server every 500 ms.
  * The server decides whether bites/heals are in range: we only report.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { Zone } from '../../../shared/protocol';
 import { ProximityTracker } from '../bluetooth/proximity';
 import { startBluetooth, stopBluetooth } from '../bluetooth/scanner';
 import { send, useGameStore } from './client';
 
-export function useProxReporter(onStatus: (text: string) => void = () => { }) {
+/** Returns what my Bluetooth hears right now: bleId -> zone. */
+export function useProxReporter(onStatus: (text: string) => void = () => { }): Record<number, Zone> {
+    const [heard, setHeard] = useState<Record<number, Zone>>({});
     const { view } = useGameStore();
     const bleId = view?.me?.bleId ?? null;
     const roundLive = view?.phase === 'countdown' || view?.phase === 'playing';
@@ -31,10 +34,14 @@ export function useProxReporter(onStatus: (text: string) => void = () => { }) {
         const timer = setInterval(() => {
             const readings = tracker.snapshot().map((r) => ({ bleId: r.playerNumber, zone: r.zone, rssi: r.rssi }));
             send('prox:report', { readings });
+            setHeard(Object.fromEntries(readings.map((r) => [r.bleId, r.zone])));
         }, 500);
         return () => {
             clearInterval(timer);
             stopBluetooth();
+            setHeard({});
         };
     }, [active, bleId]);
+
+    return heard;
 }

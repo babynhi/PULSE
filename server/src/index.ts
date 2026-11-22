@@ -147,6 +147,7 @@ io.on('connection', (socket: Socket<ClientToServer, ServerToClient>) => {
     socket.on('game:roleAck', inRoom((r) => r.roleAck(ctx.playerId)));
     socket.on('game:playAgain', inRoom((r) => r.playAgain(ctx.playerId)));
     socket.on('prox:report', inRoom((r, { readings }) => r.reportProx(ctx.playerId, readings ?? [], Date.now())));
+    socket.on('loc:report', inRoom((r, loc) => r.reportLoc(ctx.playerId, loc ?? {}, Date.now())));
     socket.on(
         'action:start',
         inRoom(
