@@ -33,6 +33,9 @@ export default function Room() {
       onReady={ready => { if (connected) send('lobby:ready', { ready }); }} readyDisabled={!connected}
       onLeave={leaveGame} onSettings={() => setPanel('settings')} onCopy={() => setStringAsync(view.code)}
       onManage={isHost && otherPlayers.length > 0 && connected ? () => setPanel('players') : undefined}
+      onAddDemo={isHost && connected && view.players.length < view.settings.maxPlayers ? () => {
+        emitAck('lobby:addDemo').then(error => { if (error) setMessage(error); });
+      } : undefined}
       messages={[...view.startBlockers.filter(reason => !reason.startsWith('Waiting for ')), ...view.warnings]}
       error={connected ? message : 'Reconnecting to the room…'} />
     {(panel === 'settings' || manage) && <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>

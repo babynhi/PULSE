@@ -7,7 +7,7 @@ import { FieldChoice, fieldStyles, MenuItem, MenuPaper, menuActionLayout, party,
 import { formatDuration } from '../ui/formatDuration';
 import { HeaderAction } from '../ui/HeaderAction';
 
-type LobbyPlayer = Pick<PublicPlayer, 'id' | 'name' | 'isHost' | 'ready' | 'connected'> & Partial<Pick<PublicPlayer, 'isBot'>>;
+type LobbyPlayer = Pick<PublicPlayer, 'id' | 'name' | 'isHost' | 'ready' | 'connected'> & Partial<Pick<PublicPlayer, 'isBot' | 'isDemo'>>;
 
 interface LobbyProps {
   roomCode: string;
@@ -19,13 +19,15 @@ interface LobbyProps {
   onCopy?: () => Promise<boolean>;
   onLeave?: () => void;
   onManage?: () => void;
+  /** Host only: adds 3 simulated demo players. */
+  onAddDemo?: () => void;
   readyDisabled?: boolean;
   messages?: string[];
   error?: string;
 }
 
 export function Lobby({ roomCode, youId, players, settings, onSettings, onReady, onCopy, onLeave,
-  onManage, readyDisabled, messages, error }: LobbyProps) {
+  onManage, onAddDemo, readyDisabled, messages, error }: LobbyProps) {
   const { height } = useWindowDimensions();
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   useEffect(() => {
@@ -86,7 +88,7 @@ export function Lobby({ roomCode, youId, players, settings, onSettings, onReady,
               </Pressable>}
             </View>
             {players.map(player => {
-              const identity = [player.id === youId && 'you', player.isHost && 'host', player.isBot && !/^bot/i.test(player.name) && 'bot'].filter(Boolean).join(', ');
+              const identity = [player.id === youId && 'you', player.isHost && 'host', player.isDemo ? 'demo' : player.isBot && !/^bot/i.test(player.name) && 'bot'].filter(Boolean).join(', ');
               return (
                 <View key={player.id} style={[s.playerRow, compact && s.compactPlayerRow]}>
                   <Text style={s.playerName}>{player.name}
@@ -102,6 +104,10 @@ export function Lobby({ roomCode, youId, players, settings, onSettings, onReady,
               <Text accessibilityLiveRegion="polite" style={fieldStyles.label}>{readyCount}/{connected.length} players ready</Text>
               <Text style={fieldStyles.muted}>The round starts when everyone is ready.</Text>
               {messages?.map(message => <Text key={message} style={fieldStyles.error}>{message}</Text>)}
+              {onAddDemo && <View style={s.demo}>
+                <FieldChoice label="+ Add 3 demo players" accessibilityLabel="Add 3 demo players" onPress={onAddDemo} />
+                <Text style={fieldStyles.muted}>Demo: simulated players who walk around near you.</Text>
+              </View>}
             </View>
           </View>
         </ScrollView>
@@ -138,6 +144,7 @@ const s = StyleSheet.create({
   notReady: { color: party.alert },
   disconnected: { color: party.muted },
   rosterFooter: { borderTopWidth: StyleSheet.hairlineWidth, borderColor: party.line, marginTop: 4, paddingTop: 10, gap: 4 },
+  demo: { marginTop: 6, gap: 4, alignItems: 'flex-start' },
   footer: { backgroundColor: party.paper },
   action: { width: '100%', maxWidth: fieldStyles.content.maxWidth, alignSelf: 'center', padding: menuActionLayout.inset, gap: 6 },
 });

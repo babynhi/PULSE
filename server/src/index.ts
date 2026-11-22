@@ -141,6 +141,13 @@ io.on('connection', (socket: Socket<ClientToServer, ServerToClient>) => {
     );
     socket.on('lobby:transferHost', inRoom((r, { playerId }) => r.transferHost(ctx.playerId, playerId)));
     socket.on(
+        'lobby:addDemo',
+        inRoom(
+            (r) => r.addDemoPlayers(ctx.playerId, Date.now()),
+            (a) => (typeof a[0] === 'function' ? a[0] : undefined),
+        ),
+    );
+    socket.on(
         'game:start',
         inRoom(
             (r) => r.start(ctx.playerId, Date.now()),

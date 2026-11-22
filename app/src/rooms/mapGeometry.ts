@@ -23,3 +23,38 @@ export const allyInitials = (name: string) => name.split(/\s+/).map(word => word
 export function pingOpacity(pingAt: number | null, now: number, fadeMs = 25_000) {
   return pingAt === null ? 0 : Math.max(0, Math.min(1, 1 - (now - pingAt) / fadeMs));
 }
+
+export type Keyed = LatLng & { key: string };
+
+function metersBetween(a: LatLng, b: LatLng) {
+  const { x, y } = offsetFrom(a, b);
+  return Math.hypot(x, y);
+}
+
+/**
+ * Pings are anonymous, so to glide a dot from its last spot to its new one we pair each new
+ * ping with the nearest unclaimed previous dot (within maxM). Unpaired pings get fresh keys.
+ */
+export function matchPings(prev: Keyed[], next: LatLng[], newKey: () => string, maxM = 60): Keyed[] {
+  const pairs: { i: number; j: number; d: number }[] = [];
+  next.forEach((n, i) => prev.forEach((p, j) => {
+    const d = metersBetween(p, n);
+    if (d <= maxM) pairs.push({ i, j, d });
+  }));
+  pairs.sort((a, b) => a.d - b.d);
+  const keys: (string | undefined)[] = new Array(next.length);
+  const used = new Set<number>();
+  for (const { i, j } of pairs) {
+    if (keys[i] !== undefined || used.has(j)) continue;
+    keys[i] = prev[j].key;
+    used.add(j);
+  }
+  return next.map((n, i) => ({ key: keys[i] ?? newKey(), lat: n.lat, lng: n.lng }));
+}
+
+/** Eased position along a glide from `from` to `to` that started at `at` and lasts `ms`. */
+export function glideAt(track: { from: LatLng; to: LatLng; at: number }, now: number, ms: number): LatLng {
+  const t = Math.max(0, Math.min(1, (now - track.at) / ms));
+  const e = t * t * (3 - 2 * t);
+  return { lat: track.from.lat + (track.to.lat - track.from.lat) * e, lng: track.from.lng + (track.to.lng - track.from.lng) * e };
+}

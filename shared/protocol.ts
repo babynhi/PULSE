@@ -78,6 +78,8 @@ export const ZONE_MIN_RADIUS_M = 20;
 export const ZONE_WARNING_MS = 30_000;
 /** Everyone's fuzzed position is pinged to everyone this often. */
 export const PING_INTERVAL_MS = 30_000;
+/** Rooms with demo players ping faster, so the demo has something moving to show. */
+export const DEMO_PING_INTERVAL_MS = 10_000;
 
 export interface LatLng {
     lat: number;
@@ -109,6 +111,8 @@ export interface PublicPlayer {
     name: string;
     isHost: boolean;
     isBot: boolean;
+    /** Simulated "demo" player the host added (walks around on fake GPS). */
+    isDemo?: boolean;
     ready: boolean;
     connected: boolean;
     /** Eliminated is public. Roles never are (until the end screen). */
@@ -202,6 +206,8 @@ export interface RoomView {
     /** Last auto-ping: fuzzed positions of every other active player. */
     pings: LatLng[];
     pingAt: number | null;
+    /** How often pings arrive in this room (PING_INTERVAL_MS, or faster with demo players). */
+    pingEveryMs?: number;
 }
 
 export type NoticeKind =
@@ -253,6 +259,8 @@ export interface ClientToServer {
     'lobby:settings': (p: { patch: Partial<Settings> }, ack?: Ack) => void;
     'lobby:kick': (p: { playerId: string }) => void;
     'lobby:transferHost': (p: { playerId: string }) => void;
+    /** Host only: add 3 simulated demo players who walk around on fake GPS near the host. */
+    'lobby:addDemo': (ack?: Ack) => void;
     'game:start': (ack: Ack) => void;
     'game:roleAck': () => void;
     'game:playAgain': () => void;
