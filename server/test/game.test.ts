@@ -105,10 +105,12 @@ test('settings: host only, clamped, unready players', () => {
     room.join('b', 'B', t0);
     room.setReady('b', true);
     assert.throws(() => room.updateSettings('b', { durationSec: 100 }), GameError);
-    room.updateSettings('a', { durationSec: 1, healCharges: 3 });
-    assert.equal(room.settings.durationSec, 60);
+    room.updateSettings('a', { durationSec: 3600, healCharges: 3 });
+    assert.equal(room.settings.durationSec, 480, 'rounds are at most 8 minutes');
     assert.deepEqual(room.changedKeys, ['durationSec', 'healCharges']);
     assert.equal(room.players.get('b')!.ready, false);
+    room.updateSettings('a', { durationSec: 1 });
+    assert.equal(room.settings.durationSec, 360, 'and at least 6 minutes');
 });
 
 test('role assignment: correct counts, roles hidden during countdown, private', () => {
@@ -272,6 +274,67 @@ test('doctor infected => immediate infected victory', () => {
     assert.match(s.room.result!.reason, /doctor/);
 });
 
+test('doctor is not immune: a doctor can be bitten (and that is an infected win)', () => {
+    const s = setup(5);
+    const doc = s.byRole('doctor')[0];
+    s.hot(s.byRole('infected')[0], doc);
+    assert.doesNotThrow(() => s.room.startAction(s.byRole('infected')[0].id, doc.bleId, s.now()));
+    s.room.cancelAction(s.byRole('infected')[0].id);
+    holdUntilDone(s, s.byRole('infected')[0], doc);
+    assert.equal(doc.role, 'infected');
+    assert.equal(s.room.result!.winner, 'infected');
+});
+
+test('heal window: cure works under 60 s after infection, then it is permanent', () => {
+    const s = setup(6);
+    const inf = s.byRole('infected')[0];
+    const doc = s.byRole('doctor')[0];
+    const [a, b] = s.byRole('innocent');
+    // a is bitten, 50 s pass: still curable, and the radar doesn't hide the heal
+    holdUntilDone(s, inf, a);
+    s.advance(48_000, 500);
+    s.hot(doc, a);
+    assert.equal(s.room.viewFor(doc.id, s.now()).radar.find((r) => r.bleId === a.bleId)!.noHeal, undefined);
+    holdUntilDone(s, doc, a);
+    assert.equal(a.role, 'innocent', 'cured inside the window');
+    // b is bitten and 60 s pass: permanent, server refuses, radar hides Hold to Heal
+    holdUntilDone(s, inf, b);
+    s.advance(60_000, 500);
+    s.hot(doc, b);
+    assert.throws(() => s.room.startAction(doc.id, b.bleId, s.now()), /permanent/);
+    assert.equal(s.room.viewFor(doc.id, s.now()).radar.find((r) => r.bleId === b.bleId)!.noHeal, true);
+    assert.equal(doc.healsLeft, 1, 'no charge used');
+    // noHeal is a doctor-only hint
+    assert.ok(s.room.viewFor(a.id, s.now()).radar.every((r) => r.noHeal === undefined));
+    // patient zero's clock started with the round, so they're permanent by now too
+    s.hot(doc, inf);
+    assert.throws(() => s.room.startAction(doc.id, inf.bleId, s.now()), /permanent/);
+});
+
+test('a heal that started in time but finishes after the window fails', () => {
+    const s = setup(5);
+    const inf = s.byRole('infected')[0];
+    const doc = s.byRole('doctor')[0];
+    const a = s.byRole('innocent')[0];
+    holdUntilDone(s, inf, a);
+    s.advance(59_000, 500);
+    s.hot(doc, a);
+    s.room.startAction(doc.id, a.bleId, s.now());
+    for (let i = 0; i < 22; i++) { s.hot(doc, a); s.advance(100); }
+    assert.equal(a.role, 'infected');
+    assert.ok(s.ends.some((e) => e.to === doc.id && !e.ok && /permanent/.test(e.reason ?? '')));
+});
+
+test('feed lines carry live infected / survivor counts', () => {
+    const s = setup(5);
+    holdUntilDone(s, s.byRole('infected')[0], s.byRole('innocent')[0]);
+    const line = s.room.feed.at(-1)!;
+    assert.equal(line.kind, 'infected');
+    assert.equal(line.infectedLeft, 2);
+    assert.equal(line.survivorsLeft, 3);
+    assert.deepEqual(s.room.viewFor('p0', s.now()).tally, { infectedLeft: 2, survivorsLeft: 3 });
+});
+
 test('everyone infected => infected win', () => {
     const s = setup(3, { doctor: false });
     const inf = s.byRole('infected')[0];
@@ -284,7 +347,7 @@ test('everyone infected => infected win', () => {
 
 test('timer runs out with a survivor => survivors win', () => {
     const s = setup(4);
-    s.advance(61_000, 500);
+    s.advance(361_000, 500);
     assert.equal(s.room.result!.winner, 'survivors');
     assert.equal(s.room.result!.standings.length, 4);
     s.room.playAgain('p1');

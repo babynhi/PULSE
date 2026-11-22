@@ -7,3 +7,5 @@ export function startBluetooth(
 }
 
 export function stopBluetooth() {}
+
+export function setScanTargets(_others: number[]) {}

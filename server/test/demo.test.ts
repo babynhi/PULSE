@@ -12,7 +12,7 @@ import {
     DEMO_WARM_M,
     DEMO_SPAWN_M,
 } from '../src/game';
-import { DEMO_PING_INTERVAL_MS, type LatLng, type Role } from '../../shared/protocol';
+import { DEMO_PING_DELAY_MS, DEMO_PING_INTERVAL_MS, type LatLng, type Role } from '../../shared/protocol';
 
 const t0 = 1_000_000;
 const HOME: LatLng = { lat: 37.7749, lng: -122.4194 };
@@ -28,7 +28,9 @@ function setup(opts: { roles?: Role[]; durationSec?: number } = {}) {
     let now = t0;
     room.join('p0', 'Host', now);
     room.addDemoPlayers('p0', now);
-    room.updateSettings('p0', { disperseSec: 0, durationSec: opts.durationSec ?? 900, biteHoldMs: 1000, healHoldMs: 1000 });
+    // Zone pinned (not the defaults) so the walk tests know when the first shrink happens (180 s).
+    room.updateSettings('p0', { disperseSec: 0, durationSec: opts.durationSec ?? 900, biteHoldMs: 1000, healHoldMs: 1000, zoneStartRadiusM: 150, zoneShrinkSec: 180 });
+    room.settings.durationSec = opts.durationSec ?? 900; // demo walks can run past the 8 min cap
     room.start('p0', now);
     const host = room.players.get('p0')!;
     const bots = [...room.players.values()].filter((p) => p.demo);
@@ -195,19 +197,21 @@ test('a demo doctor walks up to a nearby infected and heals them', () => {
     assert.equal(doc.healsLeft, 1);
 });
 
-test('demo positions respect role visibility; demo rooms ping every 10 s', () => {
-    const { room, bots, advance, pos } = setup({ roles: ['innocent', 'infected', 'innocent', 'doctor'] });
-    advance(DEMO_PING_INTERVAL_MS + 1000);
-    // Innocent viewer: anonymous fuzzed pings of all 3 bots, no ally pins, no names on radar.
-    const v = room.viewFor('p0', t0 + DEMO_PING_INTERVAL_MS + 1000);
+test('demo positions respect role visibility; demo rooms ping every 10 s, 5 s late', () => {
+    const { room, bots, advance, pos } = setup({ roles: ['innocent', 'infected', 'innocent', 'innocent'] });
+    const at = t0 + DEMO_PING_INTERVAL_MS + DEMO_PING_DELAY_MS + 1000;
+    advance(at - t0);
+    // Innocent viewer: nobody on the map, no names on radar.
+    const v = room.viewFor('p0', at);
     assert.equal(v.pingEveryMs, DEMO_PING_INTERVAL_MS);
     assert.equal(v.allies.length, 0);
-    assert.equal(v.pings.length, 3);
+    assert.equal(v.pings.length, 0);
     assert.ok(v.radar.every((r) => r.name === undefined && !r.ally));
-    // Infected viewer: live pin for the infected bot only, no pings.
+    // Infected viewer: live pin for the infected bot, delayed fuzzed pings for the 2 survivor bots.
     room.players.get('p0')!.role = 'infected';
-    const w = room.viewFor('p0', t0 + DEMO_PING_INTERVAL_MS + 1000);
-    assert.equal(w.pings.length, 0);
+    const w = room.viewFor('p0', at);
+    assert.equal(w.pings.length, 2);
+    assert.ok(w.pings.every((p) => at - p.at >= DEMO_PING_DELAY_MS));
     assert.deepEqual(w.allies.map((a) => a.name), [bots[0].name]);
     assert.ok(distanceMeters(w.allies[0], pos(bots[0])) < 0.01, 'ally pin is the live position');
 });

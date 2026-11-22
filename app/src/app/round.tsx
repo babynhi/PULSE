@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler, Modal, StyleSheet, Text, View } from 'react-native';
 import { router, Stack } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import type { ActionProgress, LatLng, RoomView, Zone } from '../../../shared/protocol';
 import { emitAck, leaveGame, send, useGameEvent, useGameStore, useServerNow } from '../net/client';
 import { useProxReporter } from '../net/useProxReporter';
@@ -11,6 +12,9 @@ import { LiveRound } from '../rooms/LiveRound';
 import { LiveRecap } from '../rooms/Recap';
 import { MapWithRadar } from '../rooms/MapRadar';
 import { HeaderAction } from '../ui/HeaderAction';
+import { DangerPulse } from '../rooms/DangerPulse';
+import { KillFeed } from '../rooms/KillFeed';
+import { alertInBackground, prepareAlerts } from '../net/alerts';
 import { FieldChoice, fieldStyles, MenuItem, party } from '../ui/Menu';
 
 function RoundMap({ room, position, band }: { room: RoomView; position: LatLng | null; band: Zone | 'NONE' }) {
@@ -69,6 +73,38 @@ export default function Round() {
   useEffect(() => () => clearTimeout(timer.current), []);
   const boundaryAlert = view?.me?.graceEndsAt != null || !!view?.zone?.warning;
   const phase = view?.phase;
+  const live = phase === 'countdown' || phase === 'playing';
+  const danger = view?.me?.danger ?? null;
+  // Screen stays on during a round; alerts get permission at the start.
+  useEffect(() => {
+    if (!live) return;
+    activateKeepAwakeAsync('pulse-round').catch(() => { });
+    void prepareAlerts();
+    return () => { deactivateKeepAwake('pulse-round').catch(() => { }); };
+  }, [live]);
+  // Locked phone / app in background: lock-screen alerts instead of the in-app UI.
+  useEffect(() => {
+    if (phase === 'playing' && (danger === 'WARM' || danger === 'HOT')) {
+      void alertInBackground('danger', danger === 'HOT' ? '🧟 Infected right next to you!' : '🧟 Infected nearby!', 'Move! Someone infected is close.');
+    }
+  }, [danger, phase]);
+  // Someone was infected: lock-screen alert when backgrounded (the in-app banner is KillFeed).
+  const lastFeed = view?.feed?.at(-1);
+  const seenFeed = useRef(lastFeed?.id ?? 0);
+  useEffect(() => {
+    if (!lastFeed || lastFeed.id <= seenFeed.current) return;
+    seenFeed.current = lastFeed.id;
+    if (phase === 'playing' && lastFeed.kind === 'infected') {
+      const left = lastFeed.survivorsLeft == null ? '' : ` ${lastFeed.infectedLeft} infected, ${lastFeed.survivorsLeft} ${lastFeed.survivorsLeft === 1 ? 'survivor' : 'survivors'} left.`;
+      void alertInBackground('someoneInfected', '🧟 Someone was infected', ('Stay alert.' + left).trim());
+    }
+  }, [lastFeed, phase]);
+  useEffect(() => {
+    if (view?.zone?.warning) void alertInBackground('zoneWarning', '⚠️ Zone shrinking soon', 'The safe zone is about to shrink. Head toward the middle.');
+  }, [view?.zone?.warning]);
+  useEffect(() => {
+    if (view?.me?.graceEndsAt != null) void alertInBackground('outsideZone', '🚨 Get back in the zone!', 'You\'re outside the safe zone. Get back in or you\'re out.');
+  }, [view?.me?.graceEndsAt]);
   useEffect(() => {
     if (!phase) router.replace('/');
     else if (phase === 'lobby') router.replace('/room');
@@ -78,6 +114,9 @@ export default function Round() {
     return () => sub.remove();
   }, []);
   useGameEvent('notice', useCallback((notice) => {
+    if (notice.kind === 'youWereInfected') void alertInBackground('infected', '🧟 You\'ve been infected!', 'You are INFECTED now. Hunt the survivors.');
+    else if (notice.kind === 'youWereCured') void alertInBackground('cured', '💉 You\'ve been cured', notice.text);
+    else if (notice.kind === 'eliminated') void alertInBackground('eliminated', '☠️ You\'re out', notice.text);
     message(notice.text, notice.kind === 'info');
     const danger = notice.kind === 'youWereInfected' || notice.kind === 'eliminated';
     Haptics.notificationAsync(danger ? Haptics.NotificationFeedbackType.Warning : Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -108,6 +147,8 @@ export default function Round() {
           onCancelAction={() => send('action:cancel')}
           onStartAction={async id => { const error = await emitAck('action:start', { targetBleId: id }); if (error) throw new Error(error); }}
           zone={<RoundMap room={view} position={position} band={nearest} />} /> : null}
+    {phase === 'playing' && view.me?.status === 'active' && <DangerPulse danger={danger} />}
+    {phase === 'playing' && <View pointerEvents="none" style={styles.feed}><KillFeed feed={view.feed} /></View>}
     {leaving && <Modal transparent animationType="fade" onRequestClose={() => setLeaving(false)}>
       <View style={styles.backdrop}><View style={[fieldStyles.panel, styles.dialog]} accessibilityViewIsModal>
         <Text accessibilityRole="header" style={fieldStyles.heading}>Leave the game?</Text>
@@ -120,6 +161,7 @@ export default function Round() {
 }
 
 const styles = StyleSheet.create({
+  feed: { position: 'absolute', left: 0, right: 0, top: 70 },
   mapPanel: { flex: 1, minHeight: 0, overflow: 'hidden', backgroundColor: party.panel },
   boundary: { paddingHorizontal: 12, paddingVertical: 6, borderLeftWidth: 4, borderColor: party.alert },
   backdrop: { flex: 1, padding: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0008' },

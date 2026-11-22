@@ -3,6 +3,9 @@ import { HeaderBackButton } from 'expo-router/react-navigation';
 import { StatusBar } from 'expo-status-bar';
 import { Platform } from 'react-native';
 import { DemoSettingsProvider } from '../demo/settings';
+// Registers the background location task at launch (must be at module scope).
+import '../net/backgroundLocation';
+import '../net/alerts';
 import { fieldStyles, party } from '../ui/fieldDay';
 import { fieldHeaderOptions, headerActionTarget } from '../ui/HeaderAction';
 

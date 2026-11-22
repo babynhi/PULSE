@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Zone } from '../../../shared/protocol';
 import { ProximityTracker } from '../bluetooth/proximity';
-import { startBluetooth, stopBluetooth } from '../bluetooth/scanner';
+import { setScanTargets, startBluetooth, stopBluetooth } from '../bluetooth/scanner';
 import { getSocket, useGameStore } from './client';
 
 export function useProxReporter(onStatus?: (text: string, healthy?: boolean) => void) {
@@ -17,6 +17,10 @@ export function useProxReporter(onStatus?: (text: string, healthy?: boolean) => 
     const bleId = view?.me?.bleId ?? null;
     const roundLive = view?.phase === 'countdown' || view?.phase === 'playing';
     const active = roundLive && view?.me?.status === 'active';
+    // Everyone else's Bluetooth number, so we can scan for them by ID (needed with the phone locked).
+    const others = (view?.radar ?? []).map((r) => r.bleId).sort((a, b) => a - b).join(',');
+    const othersRef = useRef<number[]>([]);
+    useEffect(() => { othersRef.current = others ? others.split(',').map(Number) : []; }, [others]);
 
     useEffect(() => {
         if (!active || bleId === null) return;
@@ -26,7 +30,7 @@ export function useProxReporter(onStatus?: (text: string, healthy?: boolean) => 
         try {
             startBluetooth(bleId, (n, rssi) => tracker.add(n, rssi), (message, healthy) => {
                 if (scanning) statusRef.current?.(message, healthy);
-            });
+            }, othersRef.current);
         } catch {
             statusRef.current?.('Bluetooth is unavailable. Open the PULSE development build on your iPhone.');
         }
@@ -44,5 +48,8 @@ export function useProxReporter(onStatus?: (text: string, healthy?: boolean) => 
             setHeard({});
         };
     }, [active, bleId]);
+    useEffect(() => {
+        if (active && bleId !== null) setScanTargets(othersRef.current);
+    }, [active, bleId, others]);
     return heard;
 }

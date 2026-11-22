@@ -39,26 +39,28 @@ export interface Settings {
     zoneGraceSec: number;
 }
 
+/** Short rounds by default (6 min) keep the energy up and make rematches easy. */
 export const DEFAULT_SETTINGS: Settings = {
-    durationSec: 15 * 60,
+    durationSec: 6 * 60,
     infectedCount: 1,
     doctorEnabled: true,
     healCharges: 2,
-    disperseSec: 30,
+    disperseSec: 20,
     biteHoldMs: 1000,
     healHoldMs: 1000,
     immunitySec: 10,
     reconnectSec: 30,
     maxPlayers: 20,
     zoneEnabled: true,
-    zoneStartRadiusM: 150,
-    zoneShrinkSec: 180,
+    zoneStartRadiusM: 100,
+    zoneShrinkSec: 90,
     zoneGraceSec: 10,
 };
 
 /** Min/max the server clamps each numeric setting to. */
 export const SETTING_LIMITS: Record<string, [number, number]> = {
-    durationSec: [60, 60 * 60],
+    /** Rounds are 6 to 8 minutes. */
+    durationSec: [6 * 60, 8 * 60],
     infectedCount: [1, 10],
     healCharges: [0, 10],
     disperseSec: [0, 300],
@@ -75,11 +77,18 @@ export const SETTING_LIMITS: Record<string, [number, number]> = {
 /** Zone shrink rules (not host-configurable). */
 export const ZONE_SHRINK_FACTOR = 0.7;
 export const ZONE_MIN_RADIUS_M = 20;
-export const ZONE_WARNING_MS = 30_000;
-/** Everyone's fuzzed position is pinged to everyone this often. */
+export const ZONE_WARNING_MS = 20_000;
+/** Infected get a fuzzed, delayed snapshot of the survivors this often. */
 export const PING_INTERVAL_MS = 30_000;
 /** Rooms with demo players ping faster, so the demo has something moving to show. */
 export const DEMO_PING_INTERVAL_MS = 10_000;
+/** A ping snapshot is held back this long before infected see it (so it's always stale). */
+export const PING_DELAY_MS = 15_000;
+export const DEMO_PING_DELAY_MS = 5_000;
+/** The doctor can only cure someone infected less than this long ago. After that it's permanent. */
+export const HEAL_WINDOW_MS = 60_000;
+/** Anonymous infection markers stay on everyone's map this long, fading out. */
+export const INFECTION_MARK_MS = 60_000;
 
 export interface LatLng {
     lat: number;
@@ -95,6 +104,19 @@ export interface ZoneView {
     shrinksAt: number | null;
     /** true during the last ZONE_WARNING_MS before a shrink */
     warning: boolean;
+}
+
+/** A survivor as infected see them: fuzzed 20-40 m, and `at` = when the position was sampled. */
+export interface PingDot extends LatLng {
+    /** epoch ms (server clock) when this position was true. The map labels it "30s ago". */
+    at: number;
+}
+
+/** Approximate spot where someone was just infected. Anonymous, shown to everyone. */
+export interface InfectionMark extends LatLng {
+    id: number;
+    /** epoch ms (server clock) of the infection */
+    at: number;
 }
 
 export interface AllyPos extends LatLng {
@@ -133,6 +155,30 @@ export interface MyState {
     outsideZoneSince: number | null;
     /** epoch ms when the player is eliminated if still outside */
     graceEndsAt: number | null;
+    /**
+     * Survivors only: how close the nearest infected player is right now (never who).
+     * Drives the red danger pulse and heartbeat. Always null for infected players.
+     */
+    danger?: Zone | null;
+}
+
+/** Anonymous kill-feed line, broadcast to everyone ("Someone was infected… 3 survivors left"). */
+export interface FeedItem {
+    id: number;
+    /** epoch ms */
+    at: number;
+    kind: 'infected' | 'cured' | 'eliminated';
+    text: string;
+    /** Counts right after this event, for the in-app banner. */
+    infectedLeft?: number;
+    survivorsLeft?: number;
+}
+
+/** End-of-round award. */
+export interface Mvp {
+    title: string;
+    name: string;
+    detail: string;
 }
 
 /** Registered devices this player may see on radar. */
@@ -144,6 +190,11 @@ export interface RadarEntry {
     ally: boolean;
     /** Only filled for allies. Everyone else is anonymous. */
     name?: string;
+    /**
+     * Doctor only: true when this player's infection is past the heal window (permanent),
+     * so the app hides Hold to Heal for them. The server rejects the heal anyway.
+     */
+    noHeal?: boolean;
 }
 
 export interface Standing {
@@ -172,8 +223,10 @@ export interface GameResult {
     curedTotal: number;
     eliminatedTotal: number;
     standings: Standing[];
-    /** Raw material for the Phase 3 infection tree. */
+    /** Raw material for the infection tree: every bite and cure, in order, with times. */
     events: GameEvent[];
+    /** Awards: most infections, longest survivor, best doctor, patient zero. */
+    mvps?: Mvp[];
 }
 
 export interface RoomView {
@@ -203,9 +256,19 @@ export interface RoomView {
     zone: ZoneView | null;
     /** Live positions of fellow infected. Only ever sent to infected players. */
     allies: AllyPos[];
-    /** Last auto-ping: fuzzed positions of every other active player. */
-    pings: LatLng[];
+    /**
+     * Infected only: fuzzed (20-40 m), delayed survivor positions, each with the time it was true.
+     * Innocents and the doctor never get pings: their map shows nobody else.
+     */
+    pings: PingDot[];
+    /** When the current ping snapshot was released to this viewer (null = none / not infected). */
     pingAt: number | null;
+    /** Recent anonymous infection spots (< INFECTION_MARK_MS old). Everyone sees them. */
+    infectionMarks?: InfectionMark[];
+    /** Live counts during play: active infected vs active survivors. */
+    tally?: { infectedLeft: number; survivorsLeft: number } | null;
+    /** Recent anonymous kill-feed lines (newest last). */
+    feed?: FeedItem[];
     /** How often pings arrive in this room (PING_INTERVAL_MS, or faster with demo players). */
     pingEveryMs?: number;
 }

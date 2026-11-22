@@ -4,7 +4,7 @@ import type { RoomView, Zone } from '../../../shared/protocol';
 import type { PlayerPosition } from '../net/useLocReporter';
 import { mapColors, radarBands } from './radarStyle';
 
-type RadarRoom = Pick<RoomView, 'zone' | 'allies' | 'pings' | 'pingAt'> & { me: Pick<NonNullable<RoomView['me']>, 'role'> | null };
+type RadarRoom = Pick<RoomView, 'zone' | 'allies' | 'pings' | 'pingAt' | 'infectionMarks'> & { me: Pick<NonNullable<RoomView['me']>, 'role'> | null };
 export type RadarProps = { room: RadarRoom; position: PlayerPosition | null; now: number; band: Zone | 'NONE'; demoFallback?: ReactNode };
 
 type BeamAnim = { rotate: Animated.Value; opacity: Animated.Value };
