@@ -1,8 +1,12 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { useHeaderHeight } from 'expo-router/react-navigation';
+import { type ComponentRef, useEffect, useRef, useState } from 'react';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { SETTING_LIMITS } from '../../../shared/protocol';
 import { type DemoSettings, useDemoSettings } from '../demo/settings';
+
+import { FieldDisclosure, FieldToggle, fieldStyles, menuActionLayout, MenuItem, MenuPaper, party, TrackStripe } from '../ui/Menu';
 
 type NumberKey = Exclude<keyof DemoSettings, 'doctorEnabled' | 'zoneEnabled'>;
 type Group = 'Round' | 'Roles and actions' | 'Safe zone' | 'Radar and connection';
@@ -40,13 +44,18 @@ export default function GameSettings() {
   const [draft, setDraft] = useState<Partial<Record<NumberKey, string>>>({});
   const [doctor, setDoctor] = useState(settings.doctorEnabled);
   const [zone, setZone] = useState(settings.zoneEnabled);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<{ key: NumberKey; message: string } | null>(null);
+  const inputs = useRef<Partial<Record<NumberKey, ComponentRef<typeof TextInput> | null>>>({});
+  const headerHeight = useHeaderHeight();
+  useEffect(() => {
+    if (error) inputs.current[error.key]?.focus();
+  }, [error]);
   const leave = () => router.canGoBack() ? router.back() : router.replace('/');
   function save() {
     const next = { ...settings, doctorEnabled: doctor, zoneEnabled: zone };
-    function fail(group: Group, message: string) {
+    function fail(group: Group, key: NumberKey, message: string) {
       setActive(group);
-      setError(message);
+      setError({ key, message });
     }
     for (const group of groupNames) {
       if (group === 'Safe zone' && !zone) continue;
@@ -57,65 +66,69 @@ export default function GameSettings() {
         const value = Number(input) * factor;
         const [min, max] = field.limits ?? SETTING_LIMITS[field.key];
         if (!input.trim() || !Number.isInteger(value) || value < min || value > max) {
-          return fail(group, field.label + ' must be between ' + min / factor + ' and ' + max / factor + ' ' + field.unit + '.');
+          return fail(group, field.key, field.label + ' must be between ' + min / factor + ' and ' + max / factor + ' ' + field.unit + '.');
         }
         next[field.key] = value;
       }
     }
-    if (zone && next.zoneWarningSec > next.zoneShrinkSec) return fail('Safe zone', 'The warning must fit within the shrink interval.');
-    if (next.pingDurationSec > next.pingIntervalSec) return fail('Radar and connection', 'Ping duration must fit within the interval.');
+    if (zone && next.zoneWarningSec > next.zoneShrinkSec) return fail('Safe zone', 'zoneWarningSec', 'The warning must fit within the shrink interval.');
+    if (next.pingDurationSec > next.pingIntervalSec) return fail('Radar and connection', 'pingDurationSec', 'Ping duration must fit within the interval.');
     setSettings(next);
     leave();
   }
-  return <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-    <Text style={s.caption}>{canEdit ? 'Changes apply to this demo round.' : 'Room settings are managed by the host.'}</Text>
-    {groupNames.map(group => (
-      <View key={group} style={s.section}>
-        <Pressable accessibilityRole="button" accessibilityState={{ expanded: active === group }}
-          style={s.row} onPress={() => setActive(active === group ? null : group)}>
-          <Text style={s.heading}>{group === 'Safe zone' ? 'Map and boundary' : group}</Text><Text style={s.indicator}>{active === group ? '−' : '+'}</Text>
-        </Pressable>
-        {active === group && <>
-          {(group === 'Safe zone' || group === 'Roles and actions') && <View style={s.row}>
-            <Text style={s.label}>{group === 'Safe zone' ? 'Use GPS boundary' : 'Include Doctor'}</Text>
-            {canEdit ? <Switch accessibilityLabel={group === 'Safe zone' ? 'Use GPS boundary' : 'Include Doctor'}
-              value={group === 'Safe zone' ? zone : doctor} onValueChange={group === 'Safe zone' ? setZone : setDoctor} /> :
-              <Text style={s.value}>{(group === 'Safe zone' ? zone : doctor) ? 'On' : 'Off'}</Text>}
-          </View>}
-          {(group !== 'Safe zone' || zone) && groups[group].map(field => {
-            const value = draft[field.key] ?? String(settings[field.key] / (field.factor ?? 1));
-            return <View key={field.key} style={s.row}>
-              <Text style={s.label}>{field.label}</Text>
-              <View style={s.number}>{canEdit ?
-                <TextInput accessibilityLabel={field.label + ' in ' + field.unit} keyboardType="decimal-pad"
-                  style={s.input} value={value} selectTextOnFocus
-                  onChangeText={v => { setDraft(previous => ({ ...previous, [field.key]: v })); setError(''); }} />
-                : <Text style={s.value}>{value}</Text>}
-                <Text style={s.caption}>{field.unit}</Text></View>
-            </View>;
-          })}
-        </>}
+  return <KeyboardAvoidingView style={fieldStyles.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    keyboardVerticalOffset={headerHeight}>
+    <ScrollView style={fieldStyles.page} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive">
+      <TrackStripe />
+      <View style={fieldStyles.content}>
+        <Text style={fieldStyles.muted}>{canEdit ? 'Changes apply to this demo round.' : 'Room settings are managed by the host.'}</Text>
+        {groupNames.map(group => (
+          <View key={group} style={fieldStyles.panel}>
+            <FieldDisclosure label={group === 'Safe zone' ? 'Map and boundary' : group} expanded={active === group}
+              onPress={() => setActive(active === group ? null : group)} />
+            {active === group && <>
+              {(group === 'Safe zone' || group === 'Roles and actions') && (canEdit
+                ? <FieldToggle label={group === 'Safe zone' ? 'Use GPS boundary' : 'Include Doctor'}
+                    value={group === 'Safe zone' ? zone : doctor} onValueChange={group === 'Safe zone' ? setZone : setDoctor} />
+                : <View style={[fieldStyles.row, s.row]}>
+                    <Text style={[fieldStyles.label, s.fieldLabel]}>{group === 'Safe zone' ? 'Use GPS boundary' : 'Include Doctor'}</Text>
+                    <Text style={fieldStyles.body}>{(group === 'Safe zone' ? zone : doctor) ? 'On' : 'Off'}</Text>
+                  </View>)}
+              {(group !== 'Safe zone' || zone) && groups[group].map(field => {
+                const value = draft[field.key] ?? String(settings[field.key] / (field.factor ?? 1));
+                const message = error?.key === field.key ? error.message : undefined;
+                return <View key={field.key}>
+                  <View style={[fieldStyles.row, s.row]}>
+                    <Text style={[fieldStyles.label, s.fieldLabel]}>{field.label}</Text>
+                    <View style={s.number}>{canEdit ?
+                      <TextInput ref={node => { inputs.current[field.key] = node; }} accessibilityHint={message}
+                        accessibilityLabel={field.label + ' in ' + field.unit} keyboardType="decimal-pad"
+                        style={[fieldStyles.input, s.input, message && s.invalid]} value={value} selectTextOnFocus
+                        onChangeText={v => { setDraft(previous => ({ ...previous, [field.key]: v })); if (message) setError(null); }} />
+                      : <Text style={fieldStyles.body}>{value}</Text>}
+                      <Text style={fieldStyles.muted}>{field.unit}</Text></View>
+                  </View>
+                  {message && <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={fieldStyles.error}>{message}</Text>}
+                </View>;
+              })}
+            </>}
+          </View>
+        ))}
       </View>
-    ))}
-    {error !== '' && <Text accessibilityRole="alert" style={s.error}>{error}</Text>}
-    {canEdit && <Pressable accessibilityRole="button" style={s.save} onPress={save}>
-      <Text style={s.saveLabel}>Save settings</Text>
-    </Pressable>}
-  </ScrollView>;
+    </ScrollView>
+    {canEdit && <SafeAreaView edges={['bottom']} style={s.footer}>
+      <MenuPaper />
+      <View style={s.footerAction}><MenuItem label="Save settings" onPress={save} /></View>
+    </SafeAreaView>}
+  </KeyboardAvoidingView>;
 }
 
 const s = StyleSheet.create({
-  content: { flexGrow: 1, alignSelf: 'center', width: '100%', maxWidth: 640, padding: 20, gap: 12 },
-  section: { paddingHorizontal: 16, backgroundColor: '#1B2525', borderRadius: 12 },
-  row: { minHeight: 56, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  heading: { color: '#F2F5ED', fontSize: 19, fontWeight: '700' },
-  indicator: { color: '#BCFA74', fontSize: 24 },
-  label: { color: '#F2F5ED', flexShrink: 1, fontSize: 16 },
-  caption: { color: '#AFBBB6', fontSize: 15 },
+  row: { minHeight: 48, justifyContent: 'space-between', flexWrap: 'wrap' },
+  fieldLabel: { flexShrink: 1 },
   number: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  input: { width: 66, minHeight: 44, borderWidth: 1, borderColor: '#73837D', borderRadius: 7, color: '#F2F5ED', textAlign: 'center', fontSize: 17 },
-  value: { color: '#F2F5ED', fontSize: 17 },
-  error: { color: '#FFB8A8', fontSize: 16 },
-  save: { backgroundColor: '#BCFA74', borderRadius: 10, padding: 16, alignItems: 'center' },
-  saveLabel: { color: '#152013', fontSize: 17, fontWeight: '700' },
+  input: { width: 78, textAlign: 'center', paddingHorizontal: 4 },
+  invalid: { borderColor: party.alert },
+  footer: { borderTopWidth: StyleSheet.hairlineWidth, borderColor: party.line, backgroundColor: party.paper },
+  footerAction: { width: '100%', maxWidth: fieldStyles.content.maxWidth, alignSelf: 'center', padding: menuActionLayout.inset },
 });

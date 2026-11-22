@@ -110,15 +110,6 @@ Primary actions:
 
 * Host Game  
 * Join Game  
-* How to Play
-
-The tutorial should consist of three swipeable cards:
-
-1. Roles and objectives.  
-2. Bite and Heal mechanics.  
-3. Safe zone and elimination rules.
-
-The tutorial must be skippable.
 
 ## **3.2 Permissions**
 

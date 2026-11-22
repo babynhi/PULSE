@@ -18,6 +18,7 @@ import {
     useGameStore,
     useServerNow,
 } from './net/client';
+import { FieldChoice, FieldDisclosure, fieldStyles, MenuItem, party } from './ui/Menu';
 import { useProxReporter } from './net/useProxReporter';
 
 export default function GameLab() {
@@ -28,6 +29,7 @@ export default function GameLab() {
     const [msg, setMsg] = useState('');
     const [bleStatus, setBleStatus] = useState('');
     const [progress, setProgress] = useState('');
+    const [showDebug, setShowDebug] = useState(false);
 
     useProxReporter(setBleStatus);
 
@@ -59,23 +61,23 @@ export default function GameLab() {
     // ---------- Not in a room ----------
     if (!view) {
         return (
-            <ScrollView contentContainerStyle={s.page}>
-                <Text style={s.title}>PULSE · Game Lab</Text>
-                <Text style={s.dim}>
+            <ScrollView style={fieldStyles.page} contentContainerStyle={fieldStyles.content} keyboardShouldPersistTaps="handled">
+                <Text style={fieldStyles.title}>PULSE · Game Lab</Text>
+                <Text style={fieldStyles.muted}>
                     Server {url} · {connected ? '🟢 connected' : '🔴 not connected'}
                 </Text>
-                <TextInput style={s.input} placeholder="Your name" placeholderTextColor="#666" value={name} onChangeText={setName} />
-                <Btn label="Host a game" onPress={() => run(() => hostGame(name || 'Host'))} />
+                <TextInput style={fieldStyles.input} accessibilityLabel="Your name" placeholder="Your name" placeholderTextColor={party.muted} value={name} onChangeText={setName} />
+                <MenuItem label="Host a game" onPress={() => run(() => hostGame(name || 'Host'))} />
                 <TextInput
-                    style={s.input}
-                    placeholder="Room code"
-                    placeholderTextColor="#666"
+                    style={fieldStyles.input}
+                    accessibilityLabel="Room code" placeholder="Room code"
+                    placeholderTextColor={party.muted}
                     autoCapitalize="characters"
                     value={code}
                     onChangeText={setCode}
                 />
-                <Btn label="Join" onPress={() => run(() => joinGame(name || 'Player', code))} />
-                {!!msg && <Text style={s.err}>{msg}</Text>}
+                <MenuItem label="Join" onPress={() => run(() => joinGame(name || 'Player', code))} />
+                {!!msg && <Text style={fieldStyles.error}>{msg}</Text>}
             </ScrollView>
         );
     }
@@ -87,9 +89,9 @@ export default function GameLab() {
     const canAct = view.phase === 'playing' && view.me?.status === 'active' && (role === 'infected' || role === 'doctor');
 
     return (
-        <ScrollView contentContainerStyle={s.page}>
-            <Text style={s.title}>Room {view.code}</Text>
-            <Text style={s.dim}>
+        <ScrollView style={fieldStyles.page} contentContainerStyle={fieldStyles.content} keyboardShouldPersistTaps="handled">
+            <Text style={fieldStyles.title}>Room {view.code}</Text>
+            <Text style={fieldStyles.muted}>
                 {view.phase.toUpperCase()} · {connected ? '🟢' : '🔴 reconnecting…'} · you are {me?.name}
                 {isHost ? ' (host)' : ''}
             </Text>
@@ -98,17 +100,17 @@ export default function GameLab() {
             {view.phase === 'lobby' && (
                 <>
                     {view.players.map((p) => (
-                        <Text key={p.id} style={s.row}>
+                        <Text key={p.id} style={fieldStyles.body}>
                             {p.isHost ? '👑 ' : p.ready ? '✅ ' : '⏳ '}
                             {p.name}
                             {p.isBot ? ' 🤖' : ''}
                             {p.connected ? '' : ' (offline)'}
                         </Text>
                     ))}
-                    {!isHost && <Btn label={me?.ready ? 'Not ready' : 'Ready'} onPress={() => send('lobby:ready', { ready: !me?.ready })} />}
-                    {view.debugEnabled && <Btn label="+ Add 3 bots" onPress={() => send('debug:addBots', { count: 3 })} />}
+                    {!isHost && <MenuItem label={me?.ready ? 'Not ready' : 'Ready'} onPress={() => send('lobby:ready', { ready: !me?.ready })} />}
+                    {view.debugEnabled && <MenuItem secondary label="+ Add 3 bots" onPress={() => send('debug:addBots', { count: 3 })} />}
                     {isHost && (
-                        <Btn
+                        <MenuItem
                             label="Start game"
                             onPress={() => run(async () => {
                                 const err = await emitAck('game:start');
@@ -117,7 +119,7 @@ export default function GameLab() {
                         />
                     )}
                     {view.startBlockers.map((b) => (
-                        <Text key={b} style={s.dim}>
+                        <Text key={b} style={fieldStyles.muted}>
                             • {b}
                         </Text>
                     ))}
@@ -127,61 +129,65 @@ export default function GameLab() {
             {/* ---------- Countdown ---------- */}
             {view.phase === 'countdown' && (
                 <>
-                    <Text style={s.big}>Scatter! {secsLeft(view.countdownEndsAt)} s</Text>
-                    {view.debugEnabled && <Btn label="Skip countdown" onPress={() => send('debug:skip')} />}
+                    <Text style={fieldStyles.metric}>Scatter! {secsLeft(view.countdownEndsAt)} s</Text>
+                    {view.debugEnabled && <MenuItem secondary label="Skip countdown" onPress={() => send('debug:skip')} />}
                 </>
             )}
 
             {/* ---------- Playing ---------- */}
             {view.phase === 'playing' && view.me && (
                 <>
-                    <Text style={s.big}>
+                    <Text style={fieldStyles.metric}>
                         {role?.toUpperCase()} {view.me.status === 'eliminated' ? '(eliminated)' : ''}
                     </Text>
-                    <Text style={s.dim}>
+                    <Text style={fieldStyles.muted}>
                         {Math.floor(secsLeft(view.endsAt) / 60)}:{String(secsLeft(view.endsAt) % 60).padStart(2, '0')} left · my
                         Bluetooth #{view.me.bleId}
                         {role === 'doctor' ? ` · heals left ${view.me.healsLeft}` : ''}
                     </Text>
-                    {!view.me.roleAcked && <Btn label="Got it (hide role)" onPress={() => send('game:roleAck')} />}
-                    <Text style={s.dim}>{bleStatus}</Text>
-                    {!!progress && <Text style={s.row}>{progress}</Text>}
+                    {!view.me.roleAcked && <MenuItem label="Got it (hide role)" onPress={() => send('game:roleAck')} />}
+                    <Text style={fieldStyles.muted}>{bleStatus}</Text>
+                    {!!progress && <Text style={fieldStyles.body}>{progress}</Text>}
 
-                    <Text style={s.section}>Players on radar</Text>
+                    <Text style={fieldStyles.heading}>Players on radar</Text>
+                    {view.debugEnabled && (
+                        <FieldDisclosure label="Debug controls" expanded={showDebug}
+                            onPress={() => setShowDebug(!showDebug)} />
+                    )}
                     {view.radar.map((r) => {
                         const fake = view.debugProx[r.bleId];
                         return (
-                            <View key={r.bleId} style={s.card}>
-                                <Text style={s.row}>
+                            <View key={r.bleId} style={fieldStyles.panel}>
+                                <Text style={fieldStyles.body}>
                                     #{r.bleId} {r.ally ? `🧟 ${r.name}` : ''} {fake ? `· fake ${fake}` : ''}
                                 </Text>
                                 {canAct && (
                                     <Pressable
-                                        style={({ pressed }) => [s.hold, pressed && s.holdOn]}
+                                        accessibilityRole="button"
+                                        style={({ pressed }) => [fieldStyles.panel, s.hold, pressed && s.holdOn]}
                                         onPressIn={() =>
                                             emitAck('action:start', { targetBleId: r.bleId }).then((err) => err && setProgress(err))
                                         }
                                         onPressOut={() => send('action:cancel')}
                                     >
-                                        <Text style={s.btnText}>Hold to {role === 'doctor' ? 'heal' : 'bite'}</Text>
+                                        <Text style={fieldStyles.label}>Hold to {role === 'doctor' ? 'heal' : 'bite'}</Text>
                                     </Pressable>
                                 )}
-                                {view.debugEnabled && (
-                                    <View style={s.rowBtns}>
+                                {view.debugEnabled && showDebug && (
+                                    <View style={fieldStyles.row}>
                                         {(['HOT', 'WARM', 'COLD'] as Zone[]).map((z) => (
-                                            <Pressable key={z} style={s.small} onPress={() => send('debug:setProx', { targetBleId: r.bleId, zone: z })}>
-                                                <Text style={s.btnText}>{z}</Text>
-                                            </Pressable>
+                                            <FieldChoice key={z} label={z} selected={fake === z}
+                                                onPress={() => send('debug:setProx', { targetBleId: r.bleId, zone: z })} />
                                         ))}
                                     </View>
                                 )}
                             </View>
                         );
                     })}
-                    {view.debugEnabled && (
+                    {view.debugEnabled && showDebug && (
                         <>
-                            <Btn label="Bots roam (random moves)" onPress={() => send('debug:botRoam', { on: true })} />
-                            <Btn label="End round in 5 s" onPress={() => send('debug:skip')} />
+                            <MenuItem secondary label="Bots roam (random moves)" onPress={() => send('debug:botRoam', { on: true })} />
+                            <MenuItem secondary label="End round in 5 s" onPress={() => send('debug:skip')} />
                         </>
                     )}
                 </>
@@ -190,47 +196,25 @@ export default function GameLab() {
             {/* ---------- Ended ---------- */}
             {view.phase === 'ended' && view.result && (
                 <>
-                    <Text style={s.big}>{view.result.winner === 'infected' ? '🧟 Infected win' : '🛡️ Survivors win'}</Text>
-                    <Text style={s.dim}>{view.result.reason}</Text>
+                    <Text style={fieldStyles.metric}>{view.result.winner === 'infected' ? '🧟 Infected win' : '🛡️ Survivors win'}</Text>
+                    <Text style={fieldStyles.muted}>{view.result.reason}</Text>
                     {view.result.standings.map((st) => (
-                        <Text key={st.name} style={s.row}>
+                        <Text key={st.name} style={fieldStyles.body}>
                             {st.name}: {st.startRole} → {st.finalRole} · bites {st.bites} · heals {st.heals}
                         </Text>
                     ))}
-                    {isHost && <Btn label="Play again" onPress={() => send('game:playAgain')} />}
+                    {isHost && <MenuItem label="Play again" onPress={() => send('game:playAgain')} />}
                 </>
             )}
 
-            {!!msg && <Text style={s.err}>{msg}</Text>}
-            <Btn label="Leave room" onPress={leaveGame} />
-            <Text style={s.tiny}>player id {playerId}</Text>
+            {!!msg && <Text style={fieldStyles.error}>{msg}</Text>}
+            <MenuItem secondary label="Leave room" onPress={leaveGame} />
+            <Text style={fieldStyles.muted}>player id {playerId}</Text>
         </ScrollView>
     );
 }
 
-function Btn({ label, onPress }: { label: string; onPress: () => void }) {
-    return (
-        <Pressable style={({ pressed }) => [s.btn, pressed && { opacity: 0.6 }]} onPress={onPress}>
-            <Text style={s.btnText}>{label}</Text>
-        </Pressable>
-    );
-}
-
 const s = StyleSheet.create({
-    page: { padding: 20, paddingTop: 70, gap: 10, backgroundColor: '#0b0b0f', flexGrow: 1 },
-    title: { color: '#fff', fontSize: 26, fontWeight: '800' },
-    big: { color: '#fff', fontSize: 30, fontWeight: '800', marginTop: 8 },
-    section: { color: '#fff', fontSize: 18, fontWeight: '700', marginTop: 12 },
-    dim: { color: '#999' },
-    tiny: { color: '#555', fontSize: 11, marginTop: 20 },
-    row: { color: '#ddd', fontSize: 16 },
-    err: { color: '#ff6b6b' },
-    input: { backgroundColor: '#1c1c24', color: '#fff', padding: 12, borderRadius: 10, fontSize: 16 },
-    btn: { backgroundColor: '#e63946', padding: 14, borderRadius: 12, alignItems: 'center' },
-    btnText: { color: '#fff', fontWeight: '700' },
-    card: { backgroundColor: '#16161d', padding: 12, borderRadius: 12, gap: 8 },
-    hold: { backgroundColor: '#6a040f', padding: 16, borderRadius: 12, alignItems: 'center' },
-    holdOn: { backgroundColor: '#e63946' },
-    rowBtns: { flexDirection: 'row', gap: 8 },
-    small: { backgroundColor: '#333', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8 },
+    hold: { minHeight: 48, justifyContent: 'center', alignItems: 'center', backgroundColor: party.orange },
+    holdOn: { backgroundColor: party.lime },
 });

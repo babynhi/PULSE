@@ -119,7 +119,10 @@ io.on('connection', (socket: Socket<ClientToServer, ServerToClient>) => {
         }
     });
 
-    socket.on('room:leave', () => leaveCurrent());
+    socket.on('room:leave', (ack) => {
+        leaveCurrent();
+        if (typeof ack === 'function') ack();
+    });
 
     socket.on('lobby:ready', inRoom((r, { ready }) => r.setReady(ctx.playerId, !!ready)));
     socket.on(

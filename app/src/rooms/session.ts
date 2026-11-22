@@ -25,12 +25,17 @@ export function enterRoom(
   let receivedState = false;
   let timeout: ReturnType<typeof setTimeout>;
 
-  function close() {
+  function close(leaveRoom = false) {
     if (closed) return;
     closed = true;
     clearTimeout(timeout);
     socket.removeAllListeners();
-    socket.disconnect();
+    if (leaveRoom && socket.connected && joinedCode) {
+      // Disconnect after the leave packet is acknowledged, including during a transport upgrade.
+      socket.timeout(1500).emit('room:leave', () => socket.disconnect());
+    } else {
+      socket.disconnect();
+    }
   }
 
   function fail(message: string) {
@@ -66,9 +71,13 @@ export function enterRoom(
   timeout = setTimeout(() => fail('The game server did not respond. Check your connection and try again.'), 12000);
   socket.connect();
 
-  return () => {
-    if (!closed && socket.connected && joinedCode) socket.emit('room:leave');
-    close();
+  return {
+    setReady(ready: boolean) {
+      if (!closed && socket.connected) socket.emit('lobby:ready', { ready });
+    },
+    leave() {
+      close(true);
+    },
   };
 }
 
