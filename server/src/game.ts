@@ -819,7 +819,8 @@ export class Room {
     private applyBite(actor: Player, target: Player, now: number) {
         const wasDoctor = target.role === 'doctor';
         target.role = 'infected';
-        target.roleAcked = target.isBot;
+        // No role card mid-round: the bitten player stays on the map (the app shows a toast).
+        target.roleAcked = true;
         target.infectedAt = now;
         actor.bites++;
         this.addMark(target, actor, now);
