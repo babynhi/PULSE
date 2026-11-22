@@ -35,7 +35,10 @@ export default function Room() {
       onLeave={leaveGame} onSettings={() => setPanel('settings')} onCopy={() => setStringAsync(view.code)}
       onManage={isHost && otherPlayers.length > 0 && connected ? () => setPanel('players') : undefined}
       onChangeIcon={connected ? () => setPanel('icon') : undefined}
-      testRole={view.testRole} doctorEnabled={view.settings.doctorEnabled}
+      testRole={view.testRole} doctorEnabled={view.settings.doctorEnabled} story={view.story}
+      onStory={isHost && view.testTools && connected ? on => {
+        emitAck('lobby:story', { on }).then(error => { if (error) setMessage(error); });
+      } : undefined}
       onTestRole={isHost && view.testTools && connected ? role => {
         emitAck('lobby:testRole', { role }).then(error => { if (error) setMessage(error); });
       } : undefined}

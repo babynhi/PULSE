@@ -301,6 +301,8 @@ export interface RoomView {
      * null = random. Undefined for everyone else.
      */
     testRole?: Role | null;
+    /** Host only, demo rooms only: Story mode (scripted demo) is on. */
+    story?: boolean;
     /** true when this room has demo players: test tools (Test my role, switch role) are allowed. */
     testTools?: boolean;
     /** How often pings arrive in this room (PING_INTERVAL_MS, or faster with demo players). */
@@ -352,6 +354,11 @@ export interface ClientToServer {
     'room:create': (p: { playerId: string; name: string; icon?: string }, ack: Ack<{ code: string }>) => void;
     /** If the icon is taken (or missing) the server gives the player the first free one. */
     'room:join': (p: { playerId: string; name: string; code: string; icon?: string }, ack: Ack<{ code: string }>) => void;
+    /**
+     * Host only, demo rooms only: Story mode. Demo players follow a fixed storyline (as innocent:
+     * bitten at 15 s, cured at 35 s, survivors win at 45 s; as doctor: an infected walks up at 10 s).
+     */
+    'lobby:story': (p: { on: boolean }, ack?: Ack) => void;
     /** Host only, demo rooms only: start the next round as this role (null = random). */
     'lobby:testRole': (p: { role: Role | null }, ack?: Ack) => void;
     /** Change your icon in the lobby. Fails if someone else has it. */

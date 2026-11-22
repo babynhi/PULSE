@@ -27,6 +27,9 @@ interface LobbyProps {
   /** Host, demo rooms only: the role to start the next round as (null = random). */
   testRole?: Role | null;
   onTestRole?: (role: Role | null) => void;
+  /** Host, demo rooms only: Story mode (scripted demo). */
+  story?: boolean;
+  onStory?: (on: boolean) => void;
   doctorEnabled?: boolean;
   readyDisabled?: boolean;
   messages?: string[];
@@ -34,7 +37,7 @@ interface LobbyProps {
 }
 
 export function Lobby({ roomCode, youId, players, settings, onSettings, onReady, onCopy, onLeave,
-  onManage, onAddDemo, onChangeIcon, testRole, onTestRole, doctorEnabled = true, readyDisabled, messages, error }: LobbyProps) {
+  onManage, onAddDemo, onChangeIcon, testRole, onTestRole, story, onStory, doctorEnabled = true, readyDisabled, messages, error }: LobbyProps) {
   const { height } = useWindowDimensions();
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   useEffect(() => {
@@ -125,6 +128,20 @@ export function Lobby({ roomCode, youId, players, settings, onSettings, onReady,
                   </Pressable>;
                 })}
               </View>
+              {onStory && <>
+                <Text style={[fieldStyles.label, s.storyLabel]}>Story mode</Text>
+                <Text style={fieldStyles.muted}>{story
+                  ? (testRole === 'doctor' ? 'Doctor: an infected walks up to you at 10 s and waits for your cure.'
+                    : testRole === 'innocent' ? 'Innocent: bitten at 15 s, cured by the doctor at 35 s, survivors win at 45 s.'
+                    : 'Pick Innocent or Doctor for a scripted story. Otherwise demo players just won’t bite or heal.')
+                  : 'Demo players follow a fixed, timed storyline. Great for a stage demo.'}</Text>
+                <View style={s.testChoices} accessibilityRole="radiogroup">
+                  {[false, true].map(on => <Pressable key={String(on)} accessibilityRole="radio" accessibilityState={{ checked: !!story === on }}
+                    onPress={() => onStory(on)} style={[s.testChip, !!story === on && s.testChipOn]}>
+                    <Text style={[fieldStyles.label, s.testChipText]}>{on ? 'On' : 'Off'}</Text>
+                  </Pressable>)}
+                </View>
+              </>}
             </View>}
             <View style={s.rosterFooter}>
               <Text accessibilityLiveRegion="polite" style={fieldStyles.label}>{readyCount}/{connected.length} players ready</Text>
@@ -170,6 +187,7 @@ const s = StyleSheet.create({
   testChip: { minHeight: 40, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 20, borderWidth: 2, borderColor: party.ink },
   testChipOn: { backgroundColor: party.lime },
   testChipText: { fontSize: 15 },
+  storyLabel: { marginTop: 8 },
   iconButton: { alignItems: 'center', gap: 1 },
   iconHint: { color: party.ink, fontSize: 10, fontWeight: '800' },
   identity: { ...fieldStyles.muted, fontWeight: '600' },

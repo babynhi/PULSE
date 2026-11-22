@@ -11,6 +11,9 @@ import {
     DEMO_HOT_M,
     DEMO_WARM_M,
     DEMO_SPAWN_M,
+    STORY_BITE_MS,
+    STORY_CURE_HOST_AFTER_MS,
+    STORY_CURE_ZOMBIE_AFTER_MS,
 } from '../src/game';
 import { DEMO_PING_DELAY_MS, DEMO_PING_INTERVAL_MS, type LatLng, type Role } from '../../shared/protocol';
 
@@ -262,4 +265,56 @@ test('switch role mid-round: demo rooms only, no role card', () => {
     assert.equal(demo.phase, 'playing');
     const roles = [...demo.players.values()].map((p) => p.role);
     assert.ok(roles.includes('infected') && roles.includes('doctor'), roles.join());
+});
+
+test('story mode, host innocent: bitten at 15 s, cured at 35 s, survivors win at 45 s', () => {
+    const { room, host, bots, advance, now } = setup({ roles: ['innocent', 'infected', 'innocent', 'doctor'] });
+    room.story = true;
+    const t = () => now() - room.startedAt!;
+    advance(13_000);
+    assert.equal(host.role, 'innocent');
+    assert.equal(room.viewFor('p0', now()).me!.danger, 'HOT', 'the zombie has walked right up');
+    advance(STORY_BITE_MS - t() + 200);
+    assert.equal(host.role, 'infected', `bitten at ${t()} ms`);
+    assert.equal(room.feed.at(-1)!.kind, 'infected', 'banner');
+    assert.equal(room.viewFor('p0', now()).infectionMarks!.length, 1, 'marker');
+    advance(STORY_CURE_HOST_AFTER_MS - 1000);
+    assert.equal(host.role, 'infected', 'not cured yet');
+    advance(1200);
+    assert.equal(host.role, 'innocent', `cured at ${t()} ms`);
+    assert.equal(room.phase, 'playing');
+    advance(STORY_CURE_ZOMBIE_AFTER_MS + 200);
+    assert.equal(room.phase, 'ended', 'the doctor cured the last zombie');
+    assert.equal(room.result!.winner, 'survivors');
+    assert.equal(bots[0].role, 'innocent');
+    assert.equal(room.result!.curedTotal, 2);
+});
+
+test('story mode, host doctor: an infected walks up at 10 s and waits, never bites', () => {
+    const { room, host, bots, advance, now, pos } = setup({ roles: ['doctor', 'infected', 'innocent', 'innocent'] });
+    room.story = true;
+    advance(9_000);
+    const zombie = bots[0];
+    assert.ok(distanceMeters(pos(zombie), HOME) > DEMO_WARM_M, 'still far before 10 s');
+    advance(10_000);
+    assert.ok(distanceMeters(pos(zombie), HOME) < 3, 'right next to the doctor');
+    assert.equal(room.viewFor('p0', now()).me!.danger, 'HOT');
+    advance(45_000);
+    assert.equal(host.role, 'doctor', 'never bitten');
+    assert.equal(room.phase, 'playing');
+    // the host can cure it: survivors win
+    room.startAction('p0', zombie.bleId, now());
+    advance(1500);
+    assert.equal(room.phase, 'ended');
+    assert.equal(room.result!.winner, 'survivors');
+});
+
+test('story mode is lobby-only and needs demo players', () => {
+    const room = new Room('S', undefined, false);
+    room.join('h', 'Host', t0);
+    assert.throws(() => room.setStory('h', true), /demo/);
+    room.addDemoPlayers('h', t0);
+    room.setStory('h', true);
+    assert.equal(room.viewFor('h', t0).story, true);
+    assert.equal(room.viewFor([...room.players.keys()][1], t0).story, undefined, 'only the host sees it');
 });
